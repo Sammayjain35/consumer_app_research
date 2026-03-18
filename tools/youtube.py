@@ -1,15 +1,22 @@
 """
 YouTube Research Tool
-Fetches channel stats, top videos, and search results using YouTube Data API v3.
+Fetches channel stats, top videos, search results, transcripts, and Gemini analysis.
 
 Usage:
     uv run python tools/youtube.py --channel "@ChannelHandle" --max-videos 50
     uv run python tools/youtube.py --channel-id UCxxxxxxxx --max-videos 50
-    uv run python tools/youtube.py --search "ramayan short videos hindi" --max 20
+    uv run python tools/youtube.py --search "fantasy cricket tips india" --max 20
     uv run python tools/youtube.py --video-id dQw4w9WgXcQ
+    uv run python tools/youtube.py --search "IPL tips" --max 10 --transcript
+    uv run python tools/youtube.py --search "IPL tips" --max 10 --transcript --analyze
+
+Flags:
+    --transcript   Fetch transcript for each video (no API key needed)
+    --analyze      Send each transcript to Gemini for AI analysis (requires GEMINI_API_KEY)
 
 Requires:
     YOUTUBE_API_KEY in .env
+    GEMINI_API_KEY in .env (only for --analyze)
 """
 import argparse
 import json
@@ -20,6 +27,8 @@ from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
+from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound
 
 load_dotenv()
 
@@ -37,10 +46,90 @@ def _api(endpoint: str, params: dict) -> dict:
     return r.json()
 
 
+# ── Transcript ────────────────────────────────────────────────────────────────
+
+def fetch_transcript(video_id: str) -> dict:
+    """Fetch transcript for a video. Returns {text, language, segments}."""
+    try:
+        api = YouTubeTranscriptApi()
+        # Try English first, then fall back to any available language
+        try:
+            transcript = api.fetch(video_id, languages=["en", "en-IN"])
+            language = "en"
+        except NoTranscriptFound:
+            transcript_list = api.list(video_id)
+            transcript = transcript_list.find_generated_transcript(
+                [t.language_code for t in transcript_list]
+            ).fetch()
+            language = transcript.language_code if hasattr(transcript, "language_code") else "unknown"
+
+        segments  = [{"text": s.text, "start": s.start, "duration": s.duration} for s in transcript]
+        full_text = " ".join(s["text"] for s in segments)
+        return {
+            "available":  True,
+            "language":   language,
+            "text":       full_text,
+            "segments":   segments,
+            "word_count": len(full_text.split()),
+        }
+    except TranscriptsDisabled:
+        return {"available": False, "reason": "Transcripts disabled for this video"}
+    except Exception as e:
+        return {"available": False, "reason": str(e)}
+
+
+# ── Gemini Analysis ───────────────────────────────────────────────────────────
+
+def analyze_transcript(video_title: str, transcript_text: str) -> str:
+    """Send transcript to Gemini for analysis."""
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        return "GEMINI_API_KEY not set"
+
+    try:
+        from google import genai
+        client = genai.Client(api_key=api_key)
+
+        prompt = f"""You are a content research analyst. Analyze this YouTube video transcript.
+
+Video Title: {video_title}
+
+Transcript:
+{transcript_text[:8000]}
+
+Provide analysis in this structure:
+
+**1. Core Topic**
+What is this video actually about in one sentence?
+
+**2. Key Points**
+The 5 most important things covered (bullet points).
+
+**3. Hook**
+How does the video open? What keeps viewers watching?
+
+**4. Target Audience**
+Who is this for? What problem does it solve for them?
+
+**5. Sentiment & Tone**
+Is it educational, entertaining, promotional, controversial? Overall tone?
+
+**6. Quotable Moments**
+2-3 most impactful lines or statements from the transcript (quote directly).
+"""
+
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[prompt],
+        )
+        return response.text
+    except Exception as e:
+        return f"Analysis failed: {e}"
+
+
 # ── Channel ───────────────────────────────────────────────────────────────────
 
 def resolve_channel(handle_or_id: str) -> dict:
-    """Resolve @handle or channel ID to channel data."""
     if handle_or_id.startswith("UC"):
         data = _api("channels", {"part": "snippet,statistics,contentDetails", "id": handle_or_id})
     else:
@@ -54,16 +143,16 @@ def resolve_channel(handle_or_id: str) -> dict:
     ch = items[0]
     stats = ch.get("statistics", {})
     result = {
-        "channel_id":        ch["id"],
-        "title":             ch["snippet"]["title"],
-        "description":       ch["snippet"].get("description", "")[:500],
-        "country":           ch["snippet"].get("country"),
-        "published_at":      ch["snippet"].get("publishedAt"),
-        "subscribers":       stats.get("subscriberCount"),
-        "total_views":       stats.get("viewCount"),
-        "video_count":       stats.get("videoCount"),
-        "uploads_playlist":  ch.get("contentDetails", {}).get("relatedPlaylists", {}).get("uploads"),
-        "url":               f"https://youtube.com/channel/{ch['id']}",
+        "channel_id":       ch["id"],
+        "title":            ch["snippet"]["title"],
+        "description":      ch["snippet"].get("description", "")[:500],
+        "country":          ch["snippet"].get("country"),
+        "published_at":     ch["snippet"].get("publishedAt"),
+        "subscribers":      stats.get("subscriberCount"),
+        "total_views":      stats.get("viewCount"),
+        "video_count":      stats.get("videoCount"),
+        "uploads_playlist": ch.get("contentDetails", {}).get("relatedPlaylists", {}).get("uploads"),
+        "url":              f"https://youtube.com/channel/{ch['id']}",
     }
     print(f"\n📺 {result['title']}")
     print(f"   Subscribers: {int(result['subscribers'] or 0):,} | Videos: {result['video_count']} | Views: {int(result['total_views'] or 0):,}")
@@ -71,14 +160,13 @@ def resolve_channel(handle_or_id: str) -> dict:
 
 
 def fetch_channel_videos(uploads_playlist: str, max_videos: int = 50) -> list:
-    """Fetch recent videos from uploads playlist."""
     print(f"\n🎬 Fetching up to {max_videos} videos...", flush=True)
     videos = []
     next_token = None
 
     while len(videos) < max_videos:
         params = {
-            "part": "snippet,contentDetails",
+            "part":       "snippet,contentDetails",
             "playlistId": uploads_playlist,
             "maxResults": min(50, max_videos - len(videos)),
         }
@@ -95,9 +183,9 @@ def fetch_channel_videos(uploads_playlist: str, max_videos: int = 50) -> list:
         stats_map = {v["id"]: v for v in stats_data.get("items", [])}
 
         for item in items:
-            vid_id = item["contentDetails"]["videoId"]
-            snip   = item["snippet"]
-            stats  = stats_map.get(vid_id, {}).get("statistics", {})
+            vid_id   = item["contentDetails"]["videoId"]
+            snip     = item["snippet"]
+            stats    = stats_map.get(vid_id, {}).get("statistics", {})
             duration = stats_map.get(vid_id, {}).get("contentDetails", {}).get("duration", "")
             videos.append({
                 "video_id":     vid_id,
@@ -125,7 +213,6 @@ def fetch_channel_videos(uploads_playlist: str, max_videos: int = 50) -> list:
 # ── Search ────────────────────────────────────────────────────────────────────
 
 def search_videos(query: str, max_results: int = 20, order: str = "viewCount") -> list:
-    """Search YouTube for videos matching a query."""
     print(f"\n🔍 Searching YouTube: '{query}' (order={order})")
     params = {
         "part":       "snippet",
@@ -139,15 +226,15 @@ def search_videos(query: str, max_results: int = 20, order: str = "viewCount") -
     if not items:
         return []
 
-    video_ids = [i["id"]["videoId"] for i in items]
+    video_ids  = [i["id"]["videoId"] for i in items]
     stats_data = _api("videos", {"part": "statistics,contentDetails", "id": ",".join(video_ids)})
     stats_map  = {v["id"]: v for v in stats_data.get("items", [])}
 
     results = []
     for item in items:
-        vid_id = item["id"]["videoId"]
-        snip   = item["snippet"]
-        stats  = stats_map.get(vid_id, {}).get("statistics", {})
+        vid_id   = item["id"]["videoId"]
+        snip     = item["snippet"]
+        stats    = stats_map.get(vid_id, {}).get("statistics", {})
         duration = stats_map.get(vid_id, {}).get("contentDetails", {}).get("duration", "")
         results.append({
             "video_id":     vid_id,
@@ -162,9 +249,38 @@ def search_videos(query: str, max_results: int = 20, order: str = "viewCount") -
             "comments":     int(stats.get("commentCount", 0)),
             "url":          f"https://youtube.com/watch?v={vid_id}",
         })
-        print(f"  {int(stats.get('viewCount', 0)):>10,} views | {snip.get('channelTitle', '')[:25]:<25} | {snip.get('title', '')[:60]}")
+        print(f"  {int(stats.get('viewCount', 0)):>10,} views | {snip.get('channelTitle', '')[:25]:<25} | {snip.get('title', '')[:55]}")
 
     return results
+
+
+# ── Enrich with transcripts + analysis ───────────────────────────────────────
+
+def enrich_videos(videos: list, do_transcript: bool, do_analyze: bool) -> list:
+    if not do_transcript:
+        return videos
+
+    print(f"\n📝 Fetching transcripts for {len(videos)} videos...")
+    for i, video in enumerate(videos, 1):
+        vid_id = video["video_id"]
+        title  = video.get("title", "")
+        print(f"  [{i:02d}/{len(videos):02d}] {title[:55]}...", end=" ", flush=True)
+
+        transcript = fetch_transcript(vid_id)
+        video["transcript"] = transcript
+
+        if transcript["available"]:
+            print(f"✅ {transcript['word_count']} words ({transcript['language']})", end="")
+            if do_analyze:
+                print(" → analyzing...", end=" ", flush=True)
+                video["analysis"] = analyze_transcript(title, transcript["text"])
+                print("✅")
+            else:
+                print()
+        else:
+            print(f"⚠️  {transcript['reason']}")
+
+    return videos
 
 
 # ── Save ──────────────────────────────────────────────────────────────────────
@@ -188,29 +304,54 @@ def main():
     parser.add_argument("--max-videos", type=int, default=50)
     parser.add_argument("--max",        type=int, default=20, help="Max search results")
     parser.add_argument("--order",      default="viewCount", choices=["viewCount", "relevance", "date"])
+    parser.add_argument("--transcript", action="store_true", help="Fetch transcript for each video")
+    parser.add_argument("--analyze",    action="store_true", help="Analyze each transcript with Gemini")
     parser.add_argument("--out",        default="data/youtube")
     args = parser.parse_args()
+
+    # --analyze implies --transcript
+    if args.analyze:
+        args.transcript = True
 
     out = Path(args.out)
 
     if args.search:
-        results = search_videos(args.search, args.max, args.order)
-        safe = args.search.replace(" ", "_")[:40]
-        save(f"search_{safe}", {"query": args.search, "results": results, "fetched_at": datetime.now().isoformat()}, out)
+        videos = search_videos(args.search, args.max, args.order)
+        videos = enrich_videos(videos, args.transcript, args.analyze)
+        safe   = args.search.replace(" ", "_")[:40]
+        save(f"search_{safe}", {
+            "query":      args.search,
+            "fetched_at": datetime.now().isoformat(),
+            "results":    videos,
+        }, out)
 
     elif args.channel or args.channel_id:
-        handle = args.channel or args.channel_id
+        handle  = args.channel or args.channel_id
         channel = resolve_channel(handle)
         if not channel:
             sys.exit(1)
         videos = []
         if channel.get("uploads_playlist"):
             videos = fetch_channel_videos(channel["uploads_playlist"], args.max_videos)
-        safe = (channel.get("title") or handle).replace(" ", "_")[:40]
-        save(safe, {"channel": channel, "videos": videos, "fetched_at": datetime.now().isoformat()}, out)
+        videos = enrich_videos(videos, args.transcript, args.analyze)
+        safe   = (channel.get("title") or handle).replace(" ", "_")[:40]
+        save(safe, {
+            "channel":    channel,
+            "videos":     videos,
+            "fetched_at": datetime.now().isoformat(),
+        }, out)
 
     elif args.video_id:
         data = _api("videos", {"part": "snippet,statistics,contentDetails", "id": args.video_id})
+        items = data.get("items", [])
+        if items and args.transcript:
+            video = {
+                "video_id": args.video_id,
+                "title":    items[0].get("snippet", {}).get("title", ""),
+            }
+            video = enrich_videos([video], args.transcript, args.analyze)[0]
+            data["transcript"] = video.get("transcript")
+            data["analysis"]   = video.get("analysis")
         save(args.video_id, data, out)
 
 

@@ -5,6 +5,8 @@
 Business research project — tools-first setup for comprehensive market research.
 Parallel to `research/` (v1). Focus: better tools, reusable across any research topic.
 
+**No centralized scoring. No forced verdicts. Objective = comprehensive research.**
+
 ---
 
 ## Python Environment

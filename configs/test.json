@@ -1,0 +1,14 @@
+{
+  "config": {
+    "default_max_ads_per_competitor": 5,
+    "output_directory": "data/meta_ads"
+  },
+  "competitors": [
+    {
+      "name": "SpotGames",
+      "page_id": "263206470198950",
+      "category": "gaming",
+      "url": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=IN&is_targeted_country=false&media_type=all&search_type=page&sort_data[direction]=desc&sort_data[mode]=total_impressions&view_all_page_id=263206470198950"
+    }
+  ]
+}
