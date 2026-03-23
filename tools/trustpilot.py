@@ -40,96 +40,67 @@ def scrape_company(slug: str, max_reviews: int = 100) -> dict:
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        page = browser.new_page(viewport={"width": 1280, "height": 900},
-                                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
+        page = browser.new_page(
+            viewport={"width": 1280, "height": 900},
+            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        )
         page_num = 1
 
         while len(reviews) < max_reviews:
             page_url = f"{url}?page={page_num}" if page_num > 1 else url
             try:
-                page.goto(page_url, wait_until="domcontentloaded", timeout=30000)
-                page.wait_for_timeout(2000)
+                page.goto(page_url, wait_until="networkidle", timeout=30000)
+                page.wait_for_timeout(1500)
             except Exception as e:
                 print(f"  ⚠️  Page load error: {e}")
                 break
 
-            # Company info (first page only)
-            if page_num == 1:
-                try:
-                    name_el = page.query_selector("h1[class*='title']") or page.query_selector("h1")
-                    score_el = page.query_selector("[data-rating-typography]") or page.query_selector(".typography_body-l__KUYFJ")
-                    trust_el = page.query_selector("[data-score]")
+            # Extract from __NEXT_DATA__ JSON (most reliable — Trustpilot is Next.js)
+            try:
+                next_data = page.evaluate("() => JSON.parse(document.getElementById('__NEXT_DATA__').textContent)")
+                props = next_data.get("props", {}).get("pageProps", {})
+
+                # Company info (first page only)
+                if page_num == 1:
+                    biz = props.get("businessUnit", {})
                     company_info = {
-                        "name":    name_el.inner_text().strip() if name_el else slug,
-                        "url":     page_url,
+                        "name":       biz.get("displayName", slug),
+                        "score":      biz.get("trustScore"),
+                        "stars":      biz.get("stars"),
+                        "rating_count": biz.get("numberOfReviews") if isinstance(biz.get("numberOfReviews"), int) else biz.get("numberOfReviews", {}).get("total"),
+                        "url":        page_url,
                         "scraped_at": datetime.now().isoformat(),
                     }
-                    if trust_el:
-                        company_info["score"] = trust_el.get_attribute("data-score")
-                except Exception:
-                    pass
+                    print(f"  {company_info['name']} | Score: {company_info['score']} | Total reviews: {company_info['rating_count']}")
 
-            # Reviews
-            review_cards = page.query_selector_all("[data-review-id]")
-            if not review_cards:
-                # Try alternate selector
-                review_cards = page.query_selector_all("article[class*='review']")
+                # Reviews
+                for r in props.get("reviews", []):
+                    if len(reviews) >= max_reviews:
+                        break
+                    reviews.append({
+                        "review_id":   r.get("id", ""),
+                        "title":       r.get("title", ""),
+                        "review_text": r.get("text", ""),
+                        "rating":      r.get("rating"),
+                        "date":        r.get("dates", {}).get("publishedDate", ""),
+                        "language":    r.get("language", ""),
+                        "verified":    r.get("isVerified", False),
+                    })
 
-            if not review_cards:
-                print(f"  No reviews found on page {page_num}")
-                break
+                print(f"  Page {page_num}: {len(reviews)} reviews so far", end="\r", flush=True)
 
-            for card in review_cards:
-                if len(reviews) >= max_reviews:
+                # Check if more pages — pagination is nested inside filters
+                pagination = props.get("filters", {}).get("pagination", {})
+                total_pages = pagination.get("totalPages", 1)
+                if page_num >= total_pages:
                     break
-                try:
-                    review_id  = card.get_attribute("data-review-id") or ""
-                    title_el   = card.query_selector("[class*='title']")
-                    body_el    = card.query_selector("[class*='reviewBody']") or card.query_selector("p")
-                    rating_el  = card.query_selector("img[alt*='star']") or card.query_selector("[class*='star']")
-                    date_el    = card.query_selector("time")
 
-                    title = title_el.inner_text().strip() if title_el else ""
-                    body  = body_el.inner_text().strip() if body_el else ""
-
-                    # Extract star rating from alt text or class
-                    rating = None
-                    if rating_el:
-                        alt = rating_el.get_attribute("alt") or ""
-                        match = re.search(r"(\d)", alt)
-                        if match:
-                            rating = int(match.group(1))
-                        if not rating:
-                            cls = rating_el.get_attribute("class") or ""
-                            match = re.search(r"star-(\d)", cls)
-                            if match:
-                                rating = int(match.group(1))
-
-                    date_str = None
-                    if date_el:
-                        date_str = date_el.get_attribute("datetime") or date_el.inner_text().strip()
-
-                    if body or title:
-                        reviews.append({
-                            "review_id":   review_id,
-                            "title":       title,
-                            "review_text": body,
-                            "rating":      rating,
-                            "date":        date_str,
-                        })
-                except Exception:
-                    continue
-
-            print(f"  Page {page_num}: {len(reviews)} reviews so far", end="\r", flush=True)
-
-            # Check for next page
-            next_btn = page.query_selector("a[name='pagination-button-next']") or \
-                       page.query_selector("a[data-pagination-button-next]")
-            if not next_btn:
+            except Exception as e:
+                print(f"  ⚠️  Could not parse page data: {e}")
                 break
 
             page_num += 1
-            time.sleep(1)
+            time.sleep(0.8)
 
         browser.close()
 
