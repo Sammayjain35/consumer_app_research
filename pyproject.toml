@@ -10,6 +10,7 @@ dependencies = [
     "google-genai>=1.68.0",
     "google-play-scraper>=1.2.7",
     "lxml>=6.0.2",
+    "openai>=2.29.0",
     "playwright>=1.58.0",
     "praw>=7.8.1",
     "python-dotenv>=1.2.2",
