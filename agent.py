@@ -243,7 +243,7 @@ Return ONLY a JSON array (no markdown, no explanation):
     info("  • Type 'add' to add competitors manually")
 
     while True:
-        action = ask("Keep all, remove numbers, or 'add'? [Enter=keep all]")
+        action = ask("Edit? [Enter=keep all / numbers to remove / 'major N' to upgrade / 'add']")
 
         if not action:
             break
@@ -257,10 +257,8 @@ Return ONLY a JSON array (no markdown, no explanation):
                     ok(f"Upgraded {competitors[idx]['name']} to major")
 
         elif action.lower() == "add":
-            while True:
-                name = ask("Competitor name (Enter to stop)")
-                if not name:
-                    break
+            name   = ask("Competitor name")
+            if name:
                 market = ask("Market? (global/india/china)") or "global"
                 tier   = ask("Tier? (major/minor)") or "minor"
                 notes  = ask("Notes? (optional)")
@@ -271,14 +269,8 @@ Return ONLY a JSON array (no markdown, no explanation):
             to_remove = {int(x.strip()) - 1 for x in action.split(",") if x.strip().isdigit()}
             competitors = [c for i, c in enumerate(competitors) if i not in to_remove]
             info(f"Kept {len(competitors)} competitors.")
-            # Re-print
             for i, c in enumerate(competitors, 1):
                 print(f"  {i:>2}. [{c['market'].upper():<7}] {c['name']}")
-
-        cont = ask("Done editing? [Enter=yes / 'add' to add more]")
-        if not cont or cont.lower() != "add":
-            break
-        # loop back to add more
 
     ok(f"Final competitor list: {len(competitors)} competitors")
     return competitors
@@ -373,74 +365,62 @@ def step3_gather_links(competitors: list[dict]) -> list[dict]:
             print(f"  {i:<4} {c['name']:<22} {c['market']}")
 
     print()
-    info("To fix any entry, type its number and the correct value.")
-    info("Format: '3 com.correct.package' or '3 skip' to clear.")
-    info("Press Enter when done.")
+    info("Fix entries with commands (or just press Enter to continue):")
+    info("  '3 ps com.correct.package'   — set Play Store ID")
+    info("  '3 yt @handle'               — set YouTube channel")
+    info("  '3 meta 123456789'           — set Meta Ads page ID (major only)")
+    info("  '3 meta https://facebook.com/ads/library/?...view_all_page_id=123'")
     print()
 
     while True:
-        val = ask("Fix any? (e.g. '3 com.correct.package' or Enter to continue)")
+        val = ask("Edit? (command or Enter to continue)")
         if not val:
             break
-        parts = val.strip().split(None, 1)
-        if len(parts) == 2 and parts[0].isdigit():
+        parts = val.strip().split(None, 2)
+        if len(parts) >= 3 and parts[0].isdigit():
             idx = int(parts[0]) - 1
+            field = parts[1].lower()
+            new_val = parts[2].strip()
             if 0 <= idx < len(competitors):
-                new_val = parts[1].strip()
-                if new_val.lower() == "skip":
-                    competitors[idx].pop("play_store_id", None)
-                    info(f"Cleared Play Store ID for {competitors[idx]['name']}")
-                else:
+                comp = competitors[idx]
+                if field == "ps":
                     cleaned = clean_play_store_id(new_val)
-                    if cleaned:
-                        competitors[idx]["play_store_id"] = cleaned
-                        info(f"Updated {competitors[idx]['name']} → {cleaned}")
+                    if new_val.lower() == "skip":
+                        comp.pop("play_store_id", None)
+                        info(f"Cleared Play Store ID for {comp['name']}")
+                    elif cleaned:
+                        comp["play_store_id"] = cleaned
+                        ok(f"{comp['name']} Play Store → {cleaned}")
                     else:
-                        warn("Doesn't look like a valid package ID. Try again.")
-        else:
-            warn("Format: '<number> <package_id>'")
-
-    # Meta Ads — show all at once, user pastes what they have
-    h2("Meta Ads page IDs (optional)")
-    info("For each competitor you want to scrape Meta ads, paste their Facebook Ads Library URL.")
-    info("Format: '<number> <url_or_page_id>'  — or just press Enter to skip all.\n")
-
-    for i, c in enumerate(competitors, 1):
-        print(f"  {i}. {c['name']}")
-
-    print()
-    while True:
-        val = ask("Add Meta Ads? (e.g. '1 https://facebook.com/ads/...pageid=123' or Enter to skip)")
-        if not val:
-            break
-        parts = val.strip().split(None, 1)
-        if len(parts) == 2 and parts[0].isdigit():
-            idx = int(parts[0]) - 1
-            if 0 <= idx < len(competitors):
-                raw = parts[1].strip()
-                id_match = re.search(r'view_all_page_id=(\d+)', raw)
-                if id_match:
-                    competitors[idx]["meta_ads_page_id"] = id_match.group(1)
-                    competitors[idx]["meta_ads_url"]     = raw
-                    ok(f"{competitors[idx]['name']} → page_id {id_match.group(1)}")
-                elif re.match(r'^\d+$', raw):
-                    competitors[idx]["meta_ads_page_id"] = raw
-                    competitors[idx]["meta_ads_url"] = (
-                        f"https://www.facebook.com/ads/library/?active_status=active&ad_type=all"
-                        f"&country=IN&search_type=page&view_all_page_id={raw}"
-                    )
-                    ok(f"{competitors[idx]['name']} → page_id {raw}")
+                        warn("Doesn't look like a valid package ID.")
+                elif field == "yt":
+                    handle = clean_youtube_handle(new_val)
+                    if handle:
+                        comp["youtube_channel"] = handle
+                        ok(f"{comp['name']} YouTube → {handle}")
+                    else:
+                        warn("Doesn't look like a valid YouTube handle.")
+                elif field == "meta":
+                    id_match = re.search(r'view_all_page_id=(\d+)', new_val)
+                    if id_match:
+                        comp["meta_ads_page_id"] = id_match.group(1)
+                        comp["meta_ads_url"]     = new_val
+                        ok(f"{comp['name']} Meta Ads → page_id {id_match.group(1)}")
+                    elif re.match(r'^\d+$', new_val):
+                        comp["meta_ads_page_id"] = new_val
+                        comp["meta_ads_url"] = (
+                            f"https://www.facebook.com/ads/library/?active_status=active&ad_type=all"
+                            f"&country=IN&search_type=page&view_all_page_id={new_val}"
+                        )
+                        ok(f"{comp['name']} Meta Ads → page_id {new_val}")
+                    else:
+                        warn("Paste full Ads Library URL or just the numeric page ID.")
                 else:
-                    warn("Couldn't extract page ID. Paste the full Ads Library URL.")
+                    warn("Unknown field. Use 'ps', 'yt', or 'meta'.")
+            else:
+                warn(f"No competitor #{int(parts[0])}.")
         else:
-            warn("Format: '<number> <url_or_id>'")
-
-    # Skip competitors
-    val = ask("Remove any competitors? (comma-separated numbers, or Enter to keep all)")
-    if val and re.match(r'^[\d,\s]+$', val):
-        to_remove = {int(x.strip()) - 1 for x in val.split(",") if x.strip().isdigit()}
-        competitors = [c for i, c in enumerate(competitors) if i not in to_remove]
-        ok(f"{len(competitors)} competitors remaining.")
+            warn("Format: '<number> <field> <value>'  e.g. '3 ps ai.replika.app'")
 
     return competitors
 
@@ -494,54 +474,72 @@ Rules:
         if k not in params:
             params[k] = v
 
-    # Show and confirm each parameter
+    # Show all params at once
     print()
-
-    # Web search queries
     info("Web search queries:")
     for i, q in enumerate(params["web_search_queries"], 1):
         print(f"    {i}. {q}")
-    val = ask("Add more web search queries? (comma-separated, or Enter to keep)")
-    if val:
-        params["web_search_queries"].extend([q.strip() for q in val.split(",") if q.strip()])
 
-    # China search
     info("\nChina search queries:")
     for q in params["china_search_queries"]: print(f"    • {q}")
-    val = ask("Modify? (Enter to keep)")
-    if val:
-        params["china_search_queries"] = [q.strip() for q in val.split(",") if q.strip()]
 
-    # Reddit
-    info("\nReddit queries:")
-    for q in params["reddit_queries"]: print(f"    • {q}")
-    info("Reddit subreddits:")
-    for s in params["reddit_subreddits"]: print(f"    • r/{s}")
-    val = ask("Add subreddits? (comma-separated, or Enter to keep)")
-    if val:
-        params["reddit_subreddits"].extend([s.strip() for s in val.split(",") if s.strip()])
+    info("\nReddit:")
+    for q in params["reddit_queries"]: print(f"    query  • {q}")
+    for s in params["reddit_subreddits"]: print(f"    sub    • r/{s}")
 
-    # Google Trends
-    info(f"\nGoogle Trends keywords (suggested): {params['google_trends_keywords']}")
-    info(f"Geo: {params['google_trends_geo']}")
-    info("  Note: max 5 keywords total for Google Trends.")
-    val = ask("Add more keywords? (comma-separated, or Enter to keep as-is)")
-    if val:
-        existing = [k.strip() for k in params["google_trends_keywords"].split(",") if k.strip()]
-        new_keys = [k.strip() for k in val.split(",") if k.strip()]
-        combined = existing + [k for k in new_keys if k not in existing]
-        params["google_trends_keywords"] = ",".join(combined[:5])  # cap at 5
-        info(f"  Final keywords: {params['google_trends_keywords']}")
-    val = ask("Modify geo? (e.g. IN, US, or Enter to keep)")
-    if val:
-        params["google_trends_geo"] = val
+    info(f"\nGoogle Trends: {params['google_trends_keywords']}  |  Geo: {params['google_trends_geo']}  (max 5 keywords)")
 
-    # YouTube
     info("\nYouTube search queries:")
     for q in params["youtube_search_queries"]: print(f"    • {q}")
-    val = ask("Add more YouTube queries? (comma-separated, or Enter to keep)")
-    if val:
-        params["youtube_search_queries"].extend([q.strip() for q in val.split(",") if q.strip()])
+
+    print()
+    info("Edit with commands, or press Enter to accept all:")
+    info("  'web add <query>'        — add a web search query")
+    info("  'china add <query>'      — add a China search query")
+    info("  'reddit sub <name>'      — add a subreddit")
+    info("  'reddit query <text>'    — add a Reddit query")
+    info("  'trends add <kw>'        — add a Trends keyword (max 5 total)")
+    info("  'trends geo <code>'      — set geo (e.g. IN, US)")
+    info("  'yt add <query>'         — add a YouTube search query")
+    print()
+
+    while True:
+        val = ask("Edit params? (command or Enter to accept)")
+        if not val:
+            break
+        parts = val.strip().split(None, 2)
+        if len(parts) < 3:
+            warn("Format: '<section> <action> <value>'  e.g. 'web add best AI apps India'")
+            continue
+        section, action, value = parts[0].lower(), parts[1].lower(), parts[2].strip()
+        if section == "web" and action == "add":
+            params["web_search_queries"].append(value)
+            ok(f"Added web query: {value}")
+        elif section == "china" and action == "add":
+            params["china_search_queries"].append(value)
+            ok(f"Added China query: {value}")
+        elif section == "reddit" and action == "sub":
+            params["reddit_subreddits"].append(value.lstrip("r/"))
+            ok(f"Added subreddit: r/{value.lstrip('r/')}")
+        elif section == "reddit" and action == "query":
+            params["reddit_queries"].append(value)
+            ok(f"Added Reddit query: {value}")
+        elif section == "trends" and action == "add":
+            existing = [k.strip() for k in params["google_trends_keywords"].split(",") if k.strip()]
+            if len(existing) >= 5:
+                warn("Already at 5 keywords (max for Google Trends). Remove one first.")
+            elif value not in existing:
+                existing.append(value)
+                params["google_trends_keywords"] = ",".join(existing)
+                ok(f"Trends keywords: {params['google_trends_keywords']}")
+        elif section == "trends" and action == "geo":
+            params["google_trends_geo"] = value.upper()
+            ok(f"Geo set to: {params['google_trends_geo']}")
+        elif section == "yt" and action == "add":
+            params["youtube_search_queries"].append(value)
+            ok(f"Added YouTube query: {value}")
+        else:
+            warn(f"Unknown command. Try: web/china/reddit/trends/yt + add/sub/query/geo")
 
     ok("Research parameters set.")
     return params
@@ -598,7 +596,6 @@ def step5_write_config(topic: str, competitors: list[dict], params: dict, summar
     info(f"Topic:             {topic}")
     info(f"Competitors:       {len(competitors)}")
     info(f"Play Store apps:   {len(config['play_store'])}")
-    info(f"App Store apps:    {len(config['app_store'])}")
     info(f"Meta Ads pages:    {len(config['meta_ads'])}")
     info(f"Trustpilot slugs:  {len(config['trustpilot'])}")
     info(f"YouTube channels:  {len(config['youtube']['channels'])}")
