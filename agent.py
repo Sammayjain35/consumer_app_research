@@ -148,31 +148,20 @@ def gemini_search(prompt: str) -> str:
 
 def step1_discover(topic: str) -> dict:
     h2("Step 1 — Auto-discovering market (this takes ~30s)")
-    info("Searching global, India, and China markets in parallel...")
 
-    from concurrent.futures import ThreadPoolExecutor
+    info(f"Searching global market for: {topic}...")
+    global_summary = gemini_search(
+        f"Research the global market for '{topic}'. Give me: market size, top 5-8 competitors (company names only, no descriptions), recent funding, and key trends. Be concise."
+    )
+
+    info("Searching India market...")
+    india_summary = gemini_search(
+        f"Research the '{topic}' market specifically in India. Give me: market size, top Indian + global players operating in India, growth trends, pricing norms. Be concise."
+    )
+
+    info("Searching China market...")
     from china_search import synthesize_with_deepseek
-
-    def search_global():
-        return gemini_search(
-            f"Research the global market for '{topic}'. Give me: market size, top 5-8 competitors (company names only, no descriptions), recent funding, and key trends. Be concise."
-        )
-
-    def search_india():
-        return gemini_search(
-            f"Research the '{topic}' market specifically in India. Give me: market size, top Indian + global players operating in India, growth trends, pricing norms. Be concise."
-        )
-
-    def search_china():
-        return synthesize_with_deepseek(topic, [], deep=False)
-
-    with ThreadPoolExecutor(max_workers=3) as ex:
-        f_global = ex.submit(search_global)
-        f_india  = ex.submit(search_india)
-        f_china  = ex.submit(search_china)
-        global_summary = f_global.result()
-        india_summary  = f_india.result()
-        china_summary  = f_china.result()
+    china_summary = synthesize_with_deepseek(topic, [], deep=False)
 
     ok("Discovery complete.")
     return {
