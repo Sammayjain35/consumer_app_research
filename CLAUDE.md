@@ -90,17 +90,49 @@ For scraping multiple brands at once:
 
 ---
 
+## 3-Phase Agent
+
+| Phase | How | Script |
+|-------|-----|--------|
+| **Phase 1** — Config building | Interactive in Claude Code chat. Follow `PHASE1.md`. | None — outputs `config.json` |
+| **Phase 2** — Data extraction | Reads config, runs all tools in parallel | `uv run python phase2.py research/<slug>/config.json` |
+| **Phase 3** — Synthesis | Reads all data, Gemini writes `report.md` | `uv run python phase3.py research/<slug>/config.json` |
+
+### Research folder structure
+
+```
+research/
+└── <slug>/
+    ├── config.json          ← Phase 1 output
+    ├── config_<ts>.json     ← archived old configs
+    ├── report.md            ← Phase 3 output
+    └── data/                ← Phase 2 output
+        ├── web_search/
+        ├── china_search/
+        ├── play_store/
+        ├── app_store/
+        ├── reddit/
+        ├── youtube/
+        ├── google_trends/
+        ├── meta_ads/
+        └── trustpilot/
+```
+
+---
+
 ## Project Structure
 
 ```
 research_v2/
 ├── CLAUDE.md
+├── PHASE1.md           (Phase 1 template — follow this in every chat session)
+├── phase2.py           (data extraction)
+├── phase3.py           (synthesis + report)
 ├── pyproject.toml
 ├── .python-version     (3.12)
 ├── .env                (secrets — not in git)
 ├── .env.example        (template)
 ├── tools/              (all research tools)
-├── opportunities/      (research output markdown files)
-├── data/               (raw scraped data — gitignored)
-└── configs/            (brand/competitor config JSONs)
+├── research/           (per-topic output: config + data + report)
+└── agent.py            (old Phase 1 terminal script — deprecated)
 ```
