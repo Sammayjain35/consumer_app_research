@@ -111,6 +111,37 @@ def clean_youtube_handle(val: str) -> str:
     return ""
 
 
+# ── LLM edit helper ────────────────────────────────────────────────────────────
+
+def llm_edit(current, schema_hint: str, user_request: str):
+    """Apply a natural-language edit to any JSON-serialisable state via Gemini.
+    Returns the updated state, or the original on failure."""
+    prompt = f"""You are updating a data structure based on a user request.
+
+Current state:
+{json.dumps(current, indent=2)}
+
+What this structure represents: {schema_hint}
+
+User request: "{user_request}"
+
+Apply exactly what the user asked. Return ONLY valid JSON with the same top-level type (array or object). No markdown, no explanation."""
+    raw = gemini(prompt)
+    try:
+        # Try array
+        m = re.search(r'\[.*\]', raw, re.DOTALL)
+        if m:
+            return json.loads(m.group())
+        # Try object
+        m = re.search(r'\{.*\}', raw, re.DOTALL)
+        if m:
+            return json.loads(m.group())
+    except Exception:
+        pass
+    warn("Couldn't parse LLM response — no changes made.")
+    return current
+
+
 # ── Gemini helper ──────────────────────────────────────────────────────────────
 
 def gemini(prompt: str, json_mode: bool = False) -> str:
@@ -231,42 +262,37 @@ Return ONLY a JSON array (no markdown, no explanation):
     else:
         info("No competitors found automatically.")
 
+    def _display_competitors(comps):
+        major = [c for c in comps if c.get("tier") == "major"]
+        minor = [c for c in comps if c.get("tier") != "major"]
+        if major:
+            print()
+            info(f"  MAJOR ({len(major)}):")
+            for i, c in enumerate(comps, 1):
+                if c.get("tier") == "major":
+                    print(f"  {i:>2}. ⭐ [{c['market'].upper():<7}] {c['name']:<25} {c.get('notes','')[:50]}")
+        if minor:
+            print()
+            info(f"  MINOR ({len(minor)}):")
+            for i, c in enumerate(comps, 1):
+                if c.get("tier") != "major":
+                    print(f"  {i:>2}.    [{c['market'].upper():<7}] {c['name']:<25} {c.get('notes','')[:50]}")
+
+    schema = (
+        "A list of competitor objects, each with: name (str), market ('global'|'india'|'china'), "
+        "tier ('major'|'minor'), notes (str). Numbers in the user's request refer to the list position shown."
+    )
+
     print()
-    info("You can now:")
-    info("  • Press Enter to keep all")
-    info("  • Type numbers to remove (e.g. '3,5')")
-    info("  • Type 'major <number>' to upgrade a minor to major (e.g. 'major 5')")
-    info("  • Type 'add' to add competitors manually")
+    info("Tell me any changes in plain English — or press Enter to continue.")
+    info("Examples: 'remove Kuki', 'make 9 and 12 major', 'add Chai AI as major global'")
 
     while True:
-        action = ask("Edit? [Enter=keep all / numbers to remove / 'major N' to upgrade / 'add']")
-
+        action = ask("Any changes?")
         if not action:
             break
-
-        if action.lower().startswith("major "):
-            nums = re.findall(r'\d+', action)
-            for n in nums:
-                idx = int(n) - 1
-                if 0 <= idx < len(competitors):
-                    competitors[idx]["tier"] = "major"
-                    ok(f"Upgraded {competitors[idx]['name']} to major")
-
-        elif action.lower() == "add":
-            name   = ask("Competitor name")
-            if name:
-                market = ask("Market? (global/india/china)") or "global"
-                tier   = ask("Tier? (major/minor)") or "minor"
-                notes  = ask("Notes? (optional)")
-                competitors.append({"name": name, "market": market, "tier": tier, "notes": notes})
-                ok(f"Added: {name} ({tier})")
-
-        elif re.match(r'^[\d,\s]+$', action):
-            to_remove = {int(x.strip()) - 1 for x in action.split(",") if x.strip().isdigit()}
-            competitors = [c for i, c in enumerate(competitors) if i not in to_remove]
-            info(f"Kept {len(competitors)} competitors.")
-            for i, c in enumerate(competitors, 1):
-                print(f"  {i:>2}. [{c['market'].upper():<7}] {c['name']}")
+        competitors = llm_edit(competitors, schema, action)
+        _display_competitors(competitors)
 
     ok(f"Final competitor list: {len(competitors)} competitors")
     return competitors
@@ -379,57 +405,33 @@ def step3_gather_links(competitors: list[dict]) -> list[dict]:
                 continue
             print(f"  {i:<4} {c['name']:<22} {c['market']}")
 
+    def _display_links(comps):
+        print(f"\n  {'#':<4} {'Name':<22} {'Market':<8} {'Play Store ID':<28} {'App Store ID':<14} {'YouTube':<20}")
+        print(f"  {'─'*4} {'─'*22} {'─'*8} {'─'*28} {'─'*14} {'─'*20}")
+        for i, c in enumerate(comps, 1):
+            if c.get("tier") != "major":
+                continue
+            ps = c.get("play_store_id", "❓")[:26]
+            ap = c.get("app_store_id",  "❓")[:12]
+            yt = c.get("youtube_channel", "")[:18]
+            print(f"  {i:<4} {c['name']:<22} {c['market']:<8} {ps:<28} {ap:<14} {yt:<20}")
+
+    schema = (
+        "A list of competitor objects. Each major competitor may have: play_store_id (package like "
+        "'ai.replika.app'), app_store_id (numeric string like '1158555867'), youtube_channel ('@handle'). "
+        "Numbers refer to list position. Only update the fields the user mentions; leave everything else unchanged."
+    )
+
     print()
-    info("Fix entries with commands (or just press Enter to continue):")
-    info("  '3 ps com.correct.package'   — set Play Store ID")
-    info("  '3 as 1158555867'            — set App Store ID")
-    info("  '3 yt @handle'               — set YouTube channel")
-    print()
+    info("Tell me any corrections in plain English — or press Enter to continue.")
+    info("Examples: 'Replika Play Store is ai.replika.app', 'clear YouTube for #3', 'set Chai App Store to 1544750895'")
 
     while True:
-        val = ask("Edit? (command or Enter to continue)")
+        val = ask("Any corrections?")
         if not val:
             break
-        parts = val.strip().split(None, 2)
-        if len(parts) >= 3 and parts[0].isdigit():
-            idx = int(parts[0]) - 1
-            field = parts[1].lower()
-            new_val = parts[2].strip()
-            if 0 <= idx < len(competitors):
-                comp = competitors[idx]
-                if field == "ps":
-                    cleaned = clean_play_store_id(new_val)
-                    if new_val.lower() == "skip":
-                        comp.pop("play_store_id", None)
-                        info(f"Cleared Play Store ID for {comp['name']}")
-                    elif cleaned:
-                        comp["play_store_id"] = cleaned
-                        ok(f"{comp['name']} Play Store → {cleaned}")
-                    else:
-                        warn("Doesn't look like a valid package ID.")
-                elif field == "as":
-                    cleaned = clean_app_store_id(new_val)
-                    if new_val.lower() == "skip":
-                        comp.pop("app_store_id", None)
-                        info(f"Cleared App Store ID for {comp['name']}")
-                    elif cleaned:
-                        comp["app_store_id"] = cleaned
-                        ok(f"{comp['name']} App Store → {cleaned}")
-                    else:
-                        warn("Doesn't look like a valid App Store ID.")
-                elif field == "yt":
-                    handle = clean_youtube_handle(new_val)
-                    if handle:
-                        comp["youtube_channel"] = handle
-                        ok(f"{comp['name']} YouTube → {handle}")
-                    else:
-                        warn("Doesn't look like a valid YouTube handle.")
-                else:
-                    warn("Unknown field. Use 'ps', 'as', or 'yt'.")
-            else:
-                warn(f"No competitor #{int(parts[0])}.")
-        else:
-            warn("Format: '<number> <field> <value>'  e.g. '3 ps ai.replika.app'")
+        competitors = llm_edit(competitors, schema, val)
+        _display_links(competitors)
 
     return competitors
 
@@ -497,38 +499,32 @@ def step4_meta_ads(competitors: list[dict]) -> list[dict]:
         status = "✅" if pid else "❓ missing"
         print(f"  {i:<4} {c['name']:<25} {pid:<20} {status}")
 
+    def _display_meta(comps):
+        print(f"\n  {'#':<4} {'Name':<25} {'Page ID':<22} {'Status'}")
+        print(f"  {'─'*4} {'─'*25} {'─'*22} {'─'*10}")
+        for i, c in enumerate(comps, 1):
+            if c.get("tier") != "major":
+                continue
+            pid    = c.get("meta_ads_page_id", "")
+            status = "✅" if pid else "❓ missing"
+            print(f"  {i:<4} {c['name']:<25} {pid:<22} {status}")
+
+    schema = (
+        "A list of competitor objects. Each may have meta_ads_page_id (numeric string, e.g. '123456789012345') "
+        "and meta_ads_url. The user may paste a full Facebook Ads Library URL — extract the page ID from "
+        "'view_all_page_id=<id>' in the URL. Numbers refer to list position. Only update what the user mentions."
+    )
+
     print()
-    info("Paste the Facebook Ads Library URL or just the numeric page ID.")
-    info("Format: '3 <page_id_or_url>'  — or Enter to skip")
-    print()
+    info("Tell me any page IDs in plain English — or press Enter to skip.")
+    info("Examples: 'Replika is 12345678', 'set #3 to https://facebook.com/ads/...view_all_page_id=9876'")
 
     while True:
-        val = ask("Add/fix Meta Ads page ID? (or Enter to skip)")
+        val = ask("Any Meta Ads page IDs to add?")
         if not val:
             break
-        parts = val.strip().split(None, 1)
-        if len(parts) == 2 and parts[0].isdigit():
-            idx = int(parts[0]) - 1
-            if 0 <= idx < len(competitors):
-                raw = parts[1].strip()
-                id_match = re.search(r'view_all_page_id=(\d+)', raw)
-                if id_match:
-                    pid = id_match.group(1)
-                elif re.match(r'^\d+$', raw):
-                    pid = raw
-                else:
-                    warn("Couldn't extract page ID. Paste the full Ads Library URL or numeric ID.")
-                    continue
-                competitors[idx]["meta_ads_page_id"] = pid
-                competitors[idx]["meta_ads_url"] = (
-                    f"https://www.facebook.com/ads/library/?active_status=active&ad_type=all"
-                    f"&country=IN&search_type=page&view_all_page_id={pid}"
-                )
-                ok(f"{competitors[idx]['name']} → page_id {pid}")
-            else:
-                warn(f"No competitor #{int(parts[0])}.")
-        else:
-            warn("Format: '<number> <page_id_or_url>'")
+        competitors = llm_edit(competitors, schema, val)
+        _display_meta(competitors)
 
     return competitors
 
@@ -601,54 +597,36 @@ Rules:
     info("\nYouTube search queries:")
     for q in params["youtube_search_queries"]: print(f"    • {q}")
 
+    def _display_params(p):
+        print()
+        info("Web search queries:")
+        for i, q in enumerate(p["web_search_queries"], 1): print(f"    {i}. {q}")
+        info("\nChina search queries:")
+        for q in p["china_search_queries"]: print(f"    • {q}")
+        info("\nReddit:")
+        for q in p["reddit_queries"]: print(f"    query  • {q}")
+        for s in p["reddit_subreddits"]: print(f"    sub    • r/{s}")
+        info(f"\nGoogle Trends: {p['google_trends_keywords']}  |  Geo: {p['google_trends_geo']}  (max 5 keywords)")
+        info("\nYouTube search queries:")
+        for q in p["youtube_search_queries"]: print(f"    • {q}")
+
+    schema = (
+        "A research params object with keys: web_search_queries (list), china_search_queries (list), "
+        "reddit_queries (list), reddit_subreddits (list, no 'r/' prefix), google_trends_keywords "
+        "(comma-separated string, max 5), google_trends_geo (2-letter country code), "
+        "youtube_search_queries (list). Add/remove/change whatever the user asks."
+    )
+
     print()
-    info("Edit with commands, or press Enter to accept all:")
-    info("  'web add <query>'        — add a web search query")
-    info("  'china add <query>'      — add a China search query")
-    info("  'reddit sub <name>'      — add a subreddit")
-    info("  'reddit query <text>'    — add a Reddit query")
-    info("  'trends add <kw>'        — add a Trends keyword (max 5 total)")
-    info("  'trends geo <code>'      — set geo (e.g. IN, US)")
-    info("  'yt add <query>'         — add a YouTube search query")
-    print()
+    info("Tell me any changes in plain English — or press Enter to accept all.")
+    info("Examples: 'add r/replika to subreddits', 'remove web query 2', 'set geo to US'")
 
     while True:
-        val = ask("Edit params? (command or Enter to accept)")
+        val = ask("Any changes?")
         if not val:
             break
-        parts = val.strip().split(None, 2)
-        if len(parts) < 3:
-            warn("Format: '<section> <action> <value>'  e.g. 'web add best AI apps India'")
-            continue
-        section, action, value = parts[0].lower(), parts[1].lower(), parts[2].strip()
-        if section == "web" and action == "add":
-            params["web_search_queries"].append(value)
-            ok(f"Added web query: {value}")
-        elif section == "china" and action == "add":
-            params["china_search_queries"].append(value)
-            ok(f"Added China query: {value}")
-        elif section == "reddit" and action == "sub":
-            params["reddit_subreddits"].append(value.lstrip("r/"))
-            ok(f"Added subreddit: r/{value.lstrip('r/')}")
-        elif section == "reddit" and action == "query":
-            params["reddit_queries"].append(value)
-            ok(f"Added Reddit query: {value}")
-        elif section == "trends" and action == "add":
-            existing = [k.strip() for k in params["google_trends_keywords"].split(",") if k.strip()]
-            if len(existing) >= 5:
-                warn("Already at 5 keywords (max for Google Trends). Remove one first.")
-            elif value not in existing:
-                existing.append(value)
-                params["google_trends_keywords"] = ",".join(existing)
-                ok(f"Trends keywords: {params['google_trends_keywords']}")
-        elif section == "trends" and action == "geo":
-            params["google_trends_geo"] = value.upper()
-            ok(f"Geo set to: {params['google_trends_geo']}")
-        elif section == "yt" and action == "add":
-            params["youtube_search_queries"].append(value)
-            ok(f"Added YouTube query: {value}")
-        else:
-            warn(f"Unknown command. Try: web/china/reddit/trends/yt + add/sub/query/geo")
+        params = llm_edit(params, schema, val)
+        _display_params(params)
 
     ok("Research parameters set.")
     return params
