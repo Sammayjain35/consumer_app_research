@@ -384,8 +384,6 @@ def step3_gather_links(competitors: list[dict]) -> list[dict]:
     info("  '3 ps com.correct.package'   — set Play Store ID")
     info("  '3 as 1158555867'            — set App Store ID")
     info("  '3 yt @handle'               — set YouTube channel")
-    info("  '3 meta 123456789'           — set Meta Ads page ID (major only)")
-    info("  '3 meta https://facebook.com/ads/library/?...view_all_page_id=123'")
     print()
 
     while True:
@@ -426,23 +424,8 @@ def step3_gather_links(competitors: list[dict]) -> list[dict]:
                         ok(f"{comp['name']} YouTube → {handle}")
                     else:
                         warn("Doesn't look like a valid YouTube handle.")
-                elif field == "meta":
-                    id_match = re.search(r'view_all_page_id=(\d+)', new_val)
-                    if id_match:
-                        comp["meta_ads_page_id"] = id_match.group(1)
-                        comp["meta_ads_url"]     = new_val
-                        ok(f"{comp['name']} Meta Ads → page_id {id_match.group(1)}")
-                    elif re.match(r'^\d+$', new_val):
-                        comp["meta_ads_page_id"] = new_val
-                        comp["meta_ads_url"] = (
-                            f"https://www.facebook.com/ads/library/?active_status=active&ad_type=all"
-                            f"&country=IN&search_type=page&view_all_page_id={new_val}"
-                        )
-                        ok(f"{comp['name']} Meta Ads → page_id {new_val}")
-                    else:
-                        warn("Paste full Ads Library URL or just the numeric page ID.")
                 else:
-                    warn("Unknown field. Use 'ps', 'as', 'yt', or 'meta'.")
+                    warn("Unknown field. Use 'ps', 'as', or 'yt'.")
             else:
                 warn(f"No competitor #{int(parts[0])}.")
         else:
@@ -451,10 +434,110 @@ def step3_gather_links(competitors: list[dict]) -> list[dict]:
     return competitors
 
 
-# ── Step 4: Research parameters ───────────────────────────────────────────────
+# ── Step 4: Meta Ads page IDs ──────────────────────────────────────────────────
 
-def step4_research_params(topic: str, competitors: list[dict]) -> dict:
-    h2("Step 4 — Research parameters")
+def _lookup_meta_page_id(name: str) -> str:
+    """Try to find the Facebook Ads Library page ID for a competitor via Gemini."""
+    try:
+        raw = gemini_search(
+            f"What is the official Facebook page ID for '{name}' app in the Facebook Ads Library? "
+            f"Return ONLY the numeric page ID (e.g. '123456789012345'), nothing else."
+        )
+        match = re.search(r'\b(\d{10,20})\b', raw.strip() if raw else "")
+        return match.group(1) if match else ""
+    except Exception:
+        return ""
+
+
+def step4_meta_ads(competitors: list[dict]) -> list[dict]:
+    h2("Step 4 — Meta Ads page IDs")
+
+    major = [c for c in competitors if c.get("tier") == "major"]
+    if not major:
+        info("No major competitors — skipping.")
+        return competitors
+
+    info(f"Auto-looking up Facebook page IDs for {len(major)} major competitors...")
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    lookups = {}
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        futures = {ex.submit(_lookup_meta_page_id, c["name"]): c["name"] for c in major}
+        done = 0
+        for future in as_completed(futures):
+            name = futures[future]
+            done += 1
+            print(f"  [{done:>2}/{len(major)}] {name[:40]}", end="\r", flush=True)
+            try:
+                lookups[name] = future.result()
+            except Exception:
+                lookups[name] = ""
+
+    # Apply findings
+    for comp in competitors:
+        if comp.get("tier") != "major":
+            continue
+        pid = lookups.get(comp["name"], "")
+        if pid and not comp.get("meta_ads_page_id"):
+            comp["meta_ads_page_id"] = pid
+            comp["meta_ads_url"] = (
+                f"https://www.facebook.com/ads/library/?active_status=active&ad_type=all"
+                f"&country=IN&search_type=page&view_all_page_id={pid}"
+            )
+
+    print(f"\n  ✅ Done.\n")
+
+    # Show table — major only
+    print(f"  {'#':<4} {'Name':<25} {'Page ID':<20} {'Status'}")
+    print(f"  {'─'*4} {'─'*25} {'─'*20} {'─'*10}")
+    for i, c in enumerate(competitors, 1):
+        if c.get("tier") != "major":
+            continue
+        pid    = c.get("meta_ads_page_id", "")
+        status = "✅" if pid else "❓ missing"
+        print(f"  {i:<4} {c['name']:<25} {pid:<20} {status}")
+
+    print()
+    info("Paste the Facebook Ads Library URL or just the numeric page ID.")
+    info("Format: '3 <page_id_or_url>'  — or Enter to skip")
+    print()
+
+    while True:
+        val = ask("Add/fix Meta Ads page ID? (or Enter to skip)")
+        if not val:
+            break
+        parts = val.strip().split(None, 1)
+        if len(parts) == 2 and parts[0].isdigit():
+            idx = int(parts[0]) - 1
+            if 0 <= idx < len(competitors):
+                raw = parts[1].strip()
+                id_match = re.search(r'view_all_page_id=(\d+)', raw)
+                if id_match:
+                    pid = id_match.group(1)
+                elif re.match(r'^\d+$', raw):
+                    pid = raw
+                else:
+                    warn("Couldn't extract page ID. Paste the full Ads Library URL or numeric ID.")
+                    continue
+                competitors[idx]["meta_ads_page_id"] = pid
+                competitors[idx]["meta_ads_url"] = (
+                    f"https://www.facebook.com/ads/library/?active_status=active&ad_type=all"
+                    f"&country=IN&search_type=page&view_all_page_id={pid}"
+                )
+                ok(f"{competitors[idx]['name']} → page_id {pid}")
+            else:
+                warn(f"No competitor #{int(parts[0])}.")
+        else:
+            warn("Format: '<number> <page_id_or_url>'")
+
+    return competitors
+
+
+# ── Step 5: Research parameters ───────────────────────────────────────────────
+
+def step5_research_params(topic: str, competitors: list[dict]) -> dict:
+    h2("Step 5 — Research parameters")
+
 
     comp_names = ", ".join(c["name"] for c in competitors[:6])
     info("Generating suggestions with Gemini...")
@@ -571,10 +654,10 @@ Rules:
     return params
 
 
-# ── Step 5: Write config + confirm ────────────────────────────────────────────
+# ── Step 6: Write config + confirm ────────────────────────────────────────────
 
-def step5_write_config(topic: str, competitors: list[dict], params: dict, summaries: dict) -> Path:
-    h2("Step 5 — Config summary")
+def step6_write_config(topic: str, competitors: list[dict], params: dict, summaries: dict) -> Path:
+    h2("Step 6 — Config summary")
 
     slug = re.sub(r'[^a-z0-9]+', '-', topic.lower()).strip('-')
     research_dir = Path("research") / slug
@@ -664,8 +747,9 @@ def phase1(topic: str) -> Path:
     summaries   = step1_discover(topic)
     competitors = step2_confirm_competitors(topic, summaries)
     competitors = step3_gather_links(competitors)
-    params      = step4_research_params(topic, competitors)
-    config_path = step5_write_config(topic, competitors, params, summaries)
+    competitors = step4_meta_ads(competitors)
+    params      = step5_research_params(topic, competitors)
+    config_path = step6_write_config(topic, competitors, params, summaries)
 
     h1("✅ Phase 1 Complete")
     info(f"Config saved to: {config_path}")
