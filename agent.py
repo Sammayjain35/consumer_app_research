@@ -182,7 +182,7 @@ def step2_confirm_competitors(topic: str, summaries: dict) -> list[dict]:
 
     info("Extracting competitors from research...")
     extraction_prompt = f"""
-Based on these market research summaries for '{topic}', extract all competitor companies/apps mentioned.
+Based on these market research summaries for '{topic}', extract competitor companies/apps mentioned.
 
 GLOBAL SUMMARY:
 {summaries['global'][:2000]}
@@ -193,11 +193,15 @@ INDIA SUMMARY:
 CHINA SUMMARY:
 {summaries['china'][:1000]}
 
-Return ONLY a JSON array like this (no markdown, no explanation):
+Classify each as "major" or "minor":
+- major: well-known brand, significant user base (100K+ users), notable funding, or market leader
+- minor: small startup, niche/regional player, limited presence, early stage
+
+Return ONLY a JSON array (no markdown, no explanation):
 [
-  {{"name": "Replika", "market": "global", "notes": "10M users, subscription model"}},
-  {{"name": "YourDOST", "market": "india", "notes": "Indian mental wellness app"}},
-  {{"name": "Xiaoice", "market": "china", "notes": "Microsoft spinoff, 660M users"}}
+  {{"name": "Replika", "market": "global", "tier": "major", "notes": "10M users, subscription model"}},
+  {{"name": "YourDOST", "market": "india", "tier": "minor", "notes": "small Indian startup"}},
+  {{"name": "Xiaoice", "market": "china", "tier": "major", "notes": "Microsoft spinoff, 660M users"}}
 ]
 """
     raw = gemini(extraction_prompt)
@@ -212,12 +216,22 @@ Return ONLY a JSON array like this (no markdown, no explanation):
         warn("Could not auto-extract competitors. Let's add them manually.")
         competitors = []
 
-    # Print what was found
+    # Print what was found — split by tier
     print()
+    major = [c for c in competitors if c.get("tier") == "major"]
+    minor = [c for c in competitors if c.get("tier") != "major"]
+
     if competitors:
-        info(f"I found {len(competitors)} competitors:\n")
+        info(f"I found {len(competitors)} competitors ({len(major)} major, {len(minor)} minor):\n")
+        info("  MAJOR — will scrape Play Store, Meta Ads, YouTube, web search:")
         for i, c in enumerate(competitors, 1):
-            print(f"  {i:>2}. [{c['market'].upper():<7}] {c['name']:<25} {c.get('notes','')[:50]}")
+            if c.get("tier") == "major":
+                print(f"  {i:>2}. ⭐ [{c['market'].upper():<7}] {c['name']:<25} {c.get('notes','')[:50]}")
+        print()
+        info("  MINOR — will only do web search + website:")
+        for i, c in enumerate(competitors, 1):
+            if c.get("tier") != "major":
+                print(f"  {i:>2}.    [{c['market'].upper():<7}] {c['name']:<25} {c.get('notes','')[:50]}")
     else:
         info("No competitors found automatically.")
 
@@ -225,6 +239,7 @@ Return ONLY a JSON array like this (no markdown, no explanation):
     info("You can now:")
     info("  • Press Enter to keep all")
     info("  • Type numbers to remove (e.g. '3,5')")
+    info("  • Type 'major <number>' to upgrade a minor to major (e.g. 'major 5')")
     info("  • Type 'add' to add competitors manually")
 
     while True:
@@ -233,15 +248,24 @@ Return ONLY a JSON array like this (no markdown, no explanation):
         if not action:
             break
 
-        if action.lower() == "add":
+        if action.lower().startswith("major "):
+            parts = action.split()
+            if len(parts) == 2 and parts[1].isdigit():
+                idx = int(parts[1]) - 1
+                if 0 <= idx < len(competitors):
+                    competitors[idx]["tier"] = "major"
+                    ok(f"Upgraded {competitors[idx]['name']} to major")
+
+        elif action.lower() == "add":
             while True:
                 name = ask("Competitor name (Enter to stop)")
                 if not name:
                     break
                 market = ask("Market? (global/india/china)") or "global"
+                tier   = ask("Tier? (major/minor)") or "minor"
                 notes  = ask("Notes? (optional)")
-                competitors.append({"name": name, "market": market, "notes": notes})
-                ok(f"Added: {name}")
+                competitors.append({"name": name, "market": market, "tier": tier, "notes": notes})
+                ok(f"Added: {name} ({tier})")
 
         elif re.match(r'^[\d,\s]+$', action):
             to_remove = {int(x.strip()) - 1 for x in action.split(",") if x.strip().isdigit()}
@@ -294,26 +318,32 @@ def _lookup_competitor(name: str) -> dict:
 
 
 def step3_gather_links(competitors: list[dict]) -> list[dict]:
-    h2("Step 3 — Auto-finding Play Store IDs + YouTube channels")
-    info(f"Searching {len(competitors)} competitors in parallel... (~15s)\n")
+    h2("Step 3 — Gathering links")
+    major = [c for c in competitors if c.get("tier") == "major"]
+    minor = [c for c in competitors if c.get("tier") != "major"]
+    info(f"Deep lookup for {len(major)} major competitors (Play Store + YouTube) in parallel...")
+    info(f"Minor competitors ({len(minor)}) → web search only, no deep lookup.\n")
 
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     lookups = {}
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        futures = {executor.submit(_lookup_competitor, c["name"]): c["name"] for c in competitors}
-        done = 0
-        for future in as_completed(futures):
-            name = futures[future]
-            done += 1
-            print(f"  [{done:>2}/{len(competitors)}] {name[:40]}", end="\r", flush=True)
-            try:
-                lookups[name] = future.result()
-            except Exception:
-                lookups[name] = {}
+    if major:
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = {executor.submit(_lookup_competitor, c["name"]): c["name"] for c in major}
+            done = 0
+            for future in as_completed(futures):
+                name = futures[future]
+                done += 1
+                print(f"  [{done:>2}/{len(major)}] {name[:40]}", end="\r", flush=True)
+                try:
+                    lookups[name] = future.result()
+                except Exception:
+                    lookups[name] = {}
 
-    # Apply findings to competitors
+    # Apply findings to major competitors only
     for comp in competitors:
+        if comp.get("tier") != "major":
+            continue
         found = lookups.get(comp["name"], {})
         if found.get("play_store_id") and not comp.get("play_store_id"):
             comp["play_store_id"] = found["play_store_id"]
@@ -322,13 +352,25 @@ def step3_gather_links(competitors: list[dict]) -> list[dict]:
 
     print(f"\n  ✅ Done.\n")
 
-    # Show full table — one glance overview
-    print(f"  {'#':<4} {'Name':<22} {'Market':<8} {'Play Store ID':<30} {'YouTube':<20}")
+    # Show major competitors table
+    info("⭐ MAJOR competitors (Play Store + Meta Ads + YouTube + web search):")
+    print(f"\n  {'#':<4} {'Name':<22} {'Market':<8} {'Play Store ID':<30} {'YouTube':<20}")
     print(f"  {'─'*4} {'─'*22} {'─'*8} {'─'*30} {'─'*20}")
     for i, c in enumerate(competitors, 1):
-        ps  = c.get("play_store_id", "❓ not found")[:28]
-        yt  = c.get("youtube_channel", "")[:18]
+        if c.get("tier") != "major":
+            continue
+        ps = c.get("play_store_id", "❓ not found")[:28]
+        yt = c.get("youtube_channel", "")[:18]
         print(f"  {i:<4} {c['name']:<22} {c['market']:<8} {ps:<30} {yt:<20}")
+
+    # Show minor competitors
+    if minor:
+        print()
+        info("   MINOR competitors (web search only):")
+        for i, c in enumerate(competitors, 1):
+            if c.get("tier") == "major":
+                continue
+            print(f"  {i:<4} {c['name']:<22} {c['market']}")
 
     print()
     info("To fix any entry, type its number and the correct value.")
@@ -520,7 +562,10 @@ def step5_write_config(topic: str, competitors: list[dict], params: dict, summar
         "slug":          slug,
         "created_at":    datetime.now().isoformat(),
         "markets":       ["global", "india", "china"],
-        "competitors":   competitors,
+        "competitors":   {
+            "major": [c for c in competitors if c.get("tier") == "major"],
+            "minor": [c for c in competitors if c.get("tier") != "major"],
+        },
         "web_search":    {"queries": params["web_search_queries"]},
         "china_search":  {"queries": params["china_search_queries"]},
         "reddit":        {
@@ -538,11 +583,11 @@ def step5_write_config(topic: str, competitors: list[dict], params: dict, summar
         },
         "meta_ads": [
             {"name": c["name"], "page_id": c["meta_ads_page_id"], "url": c.get("meta_ads_url", "")}
-            for c in competitors if c.get("meta_ads_page_id")
+            for c in competitors if c.get("tier") == "major" and c.get("meta_ads_page_id")
         ],
         "websites":      [{"name": c["name"], "url": c["website"]} for c in competitors if c.get("website")],
         "play_store":    [c["play_store_id"] for c in competitors
-                          if clean_play_store_id(c.get("play_store_id", ""))],
+                          if c.get("tier") == "major" and clean_play_store_id(c.get("play_store_id", ""))],
         "trustpilot":    [c["trustpilot_slug"] for c in competitors
                           if c.get("trustpilot_slug") and not c["trustpilot_slug"].startswith("http")],
         "discovery":     summaries,
