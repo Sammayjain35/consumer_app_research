@@ -31,6 +31,86 @@ def ok(text):    print(f"  ✅ {text}")
 def warn(text):  print(f"  ⚠️  {text}")
 
 
+# ── Data cleaners ──────────────────────────────────────────────────────────────
+
+def clean_app_store_id(val: str) -> str:
+    """Extract numeric App Store ID from any format."""
+    val = val.strip()
+    if not val or val.lower() in ("skip", "yes", "no"):
+        return ""
+    # Strip 'id' prefix (e.g. id1158555867 → 1158555867)
+    if re.match(r'^id\d+$', val, re.IGNORECASE):
+        return val[2:]
+    # Full URL: extract numeric ID
+    match = re.search(r'/id(\d+)', val)
+    if match:
+        return match.group(1)
+    # Just numbers
+    match = re.search(r'\b(\d{8,12})\b', val)
+    if match:
+        return match.group(1)
+    # If it's not URL-like and has no dot, probably junk
+    if val.startswith("http") or ("." not in val and not val.isdigit()):
+        return ""
+    return val
+
+
+def clean_play_store_id(val: str) -> str:
+    """Extract package ID from Play Store URLs or query strings."""
+    val = val.strip()
+    if not val or val.lower() in ("skip", "yes", "no"):
+        return ""
+    # Full URL
+    if "play.google.com" in val:
+        match = re.search(r'[?&]id=([^&\s]+)', val)
+        return match.group(1) if match else ""
+    # Query string: id=ai.replika.app&hl=en_IN
+    if val.startswith("id="):
+        val = val[3:]
+    # Strip trailing query params
+    val = val.split("&")[0].split("?")[0].strip()
+    # Must look like a package ID (contains dots, no spaces)
+    if "." in val and " " not in val and not val.startswith("http"):
+        return val
+    return ""
+
+
+def clean_trustpilot_slug(val: str) -> str:
+    """Extract slug from Trustpilot URL or return as-is."""
+    val = val.strip()
+    if not val or val.lower() in ("skip", "yes", "no"):
+        return ""
+    if "trustpilot.com/review/" in val:
+        slug = val.split("trustpilot.com/review/")[-1]
+        return slug.split("?")[0].split("/")[0].strip()
+    # Remove protocol/www if someone pasted a domain
+    if val.startswith("http"):
+        return ""
+    return val
+
+
+def clean_youtube_handle(val: str) -> str:
+    """Extract @handle from YouTube URL, or return as-is if already a handle."""
+    val = val.strip()
+    if not val or val.lower() in ("skip", "yes", "no"):
+        return ""
+    # Already a handle
+    if val.startswith("@"):
+        return val
+    # YouTube URL with @handle
+    match = re.search(r'youtube\.com/@([^/?&\s]+)', val)
+    if match:
+        return f"@{match.group(1)}"
+    # YouTube channel URL
+    match = re.search(r'youtube\.com/channel/([^/?&\s]+)', val)
+    if match:
+        return match.group(1)
+    # Plain handle without @
+    if re.match(r'^[A-Za-z0-9_.-]+$', val) and len(val) > 2:
+        return f"@{val}"
+    return ""
+
+
 # ── Gemini helper ──────────────────────────────────────────────────────────────
 
 def gemini(prompt: str, json_mode: bool = False) -> str:
@@ -199,96 +279,105 @@ def step3_gather_links(competitors: list[dict]) -> list[dict]:
             results = search_apps(name, country="us", limit=3)
             if results:
                 best = results[0]
-                print(f"     App Store found: {best['trackName']} (ID: {best['trackId']})")
-                confirm = ask(f"Use App Store ID {best['trackId']} for {name}? [Enter=yes / type different ID / 'skip']")
-                if not confirm:
-                    comp["app_store_id"] = str(best["trackId"])
-                elif confirm.lower() != "skip":
-                    comp["app_store_id"] = confirm
+                found_id = str(best["trackId"])
+                print(f"     Found: {best['trackName']} (ID: {found_id})")
+                confirm = ask(f"Use this? [Enter=yes / type different ID / 'skip']")
+                if not confirm or confirm.lower() in ("yes", "y"):
+                    comp["app_store_id"] = found_id
+                elif confirm.lower() not in ("skip", "no"):
+                    cleaned = clean_app_store_id(confirm)
+                    if cleaned:
+                        comp["app_store_id"] = cleaned
             else:
                 val = ask(f"App Store ID for {name}? ('skip' to skip)")
-                if val.lower() != "skip":
-                    comp["app_store_id"] = val
+                cleaned = clean_app_store_id(val)
+                if cleaned:
+                    comp["app_store_id"] = cleaned
         except Exception:
             val = ask(f"App Store ID for {name}? ('skip' to skip)")
-            if val and val.lower() != "skip":
-                comp["app_store_id"] = val
+            cleaned = clean_app_store_id(val)
+            if cleaned:
+                comp["app_store_id"] = cleaned
 
         # --- Play Store ---
         info("Searching Play Store...")
         try:
             play_result = gemini_search(
                 f"Find the Google Play Store package ID for the app '{name}'. "
-                f"Return ONLY the package ID (e.g. ai.replika.app), nothing else."
+                f"Return ONLY the package ID (e.g. ai.replika.app), nothing else. No URLs, no extra text."
             )
-            play_id = play_result.strip().split()[0] if play_result else ""
-            # Basic validation — package IDs have dots
-            if "." in play_id and len(play_id) > 5:
-                print(f"     Play Store found: {play_id}")
-                confirm = ask(f"Use Play Store ID '{play_id}'? [Enter=yes / type different ID / 'skip']")
-                if not confirm:
+            play_id = clean_play_store_id(play_result.strip().split()[0] if play_result else "")
+            if play_id:
+                print(f"     Found: {play_id}")
+                confirm = ask(f"Use this? [Enter=yes / type different ID / 'skip']")
+                if not confirm or confirm.lower() in ("yes", "y"):
                     comp["play_store_id"] = play_id
-                elif confirm.lower() != "skip":
-                    comp["play_store_id"] = confirm
+                elif confirm.lower() not in ("skip", "no"):
+                    cleaned = clean_play_store_id(confirm)
+                    if cleaned:
+                        comp["play_store_id"] = cleaned
             else:
-                val = ask(f"Play Store package ID for {name}? ('skip' to skip)")
-                if val and val.lower() != "skip":
-                    comp["play_store_id"] = val
+                val = ask(f"Play Store package ID for {name}? (e.g. ai.replika.app / 'skip')")
+                cleaned = clean_play_store_id(val)
+                if cleaned:
+                    comp["play_store_id"] = cleaned
         except Exception:
-            val = ask(f"Play Store package ID for {name}? ('skip' to skip)")
-            if val and val.lower() != "skip":
-                comp["play_store_id"] = val
+            val = ask(f"Play Store package ID for {name}? (e.g. ai.replika.app / 'skip')")
+            cleaned = clean_play_store_id(val)
+            if cleaned:
+                comp["play_store_id"] = cleaned
 
         # --- Meta Ads ---
-        info("Meta Ads page ID — I can't find this automatically.")
-        info(f"  Go to: https://www.facebook.com/{name.replace(' ', '')} → copy the page URL")
-        val = ask(f"Meta Ads page URL or page ID for {name}? ('skip' to skip)")
-        if val and val.lower() != "skip":
-            # Extract page ID from URL if they pasted a full URL
+        info("Meta Ads — paste their Facebook Ads Library URL or just the numeric page ID.")
+        val = ask(f"Meta Ads page URL or ID for {name}? ('skip' to skip)")
+        if val and val.lower() not in ("skip", "no"):
             id_match = re.search(r'view_all_page_id=(\d+)', val)
             if id_match:
                 comp["meta_ads_page_id"] = id_match.group(1)
                 comp["meta_ads_url"]     = val
-            elif val.isdigit():
+            elif re.match(r'^\d+$', val):
                 comp["meta_ads_page_id"] = val
-                comp["meta_ads_url"]     = (
+                comp["meta_ads_url"] = (
                     f"https://www.facebook.com/ads/library/?active_status=active&ad_type=all"
                     f"&country=IN&search_type=page&view_all_page_id={val}"
                 )
-            else:
-                comp["meta_ads_url"] = val
 
         # --- Trustpilot ---
         slug_guess = name.lower().replace(" ", "")
-        val = ask(f"Trustpilot slug for {name}? [Enter='{slug_guess}' / type different / 'skip']")
-        if not val:
+        val = ask(f"Trustpilot slug for {name}? [Enter='{slug_guess}' / paste URL / 'skip']")
+        if not val or val.lower() in ("yes", "y"):
             comp["trustpilot_slug"] = slug_guess
-        elif val.lower() != "skip":
-            comp["trustpilot_slug"] = val
+        elif val.lower() not in ("skip", "no"):
+            cleaned = clean_trustpilot_slug(val) or val
+            comp["trustpilot_slug"] = cleaned
 
         # --- YouTube ---
         info("Searching YouTube channel...")
         try:
             yt_result = gemini_search(
                 f"Find the official YouTube channel handle for '{name}' app/company. "
-                f"Return ONLY the handle (e.g. @Replika), nothing else."
+                f"Return ONLY the @handle (e.g. @Replika), nothing else."
             )
-            yt_handle = yt_result.strip().split()[0] if yt_result else ""
-            if yt_handle.startswith("@"):
-                print(f"     YouTube found: {yt_handle}")
-                confirm = ask(f"Use YouTube channel '{yt_handle}'? [Enter=yes / type different / 'skip']")
-                if not confirm:
+            yt_handle = clean_youtube_handle(yt_result.strip().split()[0] if yt_result else "")
+            if yt_handle:
+                print(f"     Found: {yt_handle}")
+                confirm = ask(f"Use this? [Enter=yes / type different handle / 'skip']")
+                if not confirm or confirm.lower() in ("yes", "y"):
                     comp["youtube_channel"] = yt_handle
-                elif confirm.lower() != "skip":
-                    comp["youtube_channel"] = confirm
+                elif confirm.lower() not in ("skip", "no"):
+                    cleaned = clean_youtube_handle(confirm)
+                    if cleaned:
+                        comp["youtube_channel"] = cleaned
             else:
-                val = ask(f"YouTube channel handle for {name}? (e.g. @Replika / 'skip')")
-                if val and val.lower() != "skip":
-                    comp["youtube_channel"] = val
+                val = ask(f"YouTube channel for {name}? (e.g. @Replika / 'skip')")
+                cleaned = clean_youtube_handle(val)
+                if cleaned:
+                    comp["youtube_channel"] = cleaned
         except Exception:
-            val = ask(f"YouTube channel handle for {name}? (e.g. @Replika / 'skip')")
-            if val and val.lower() != "skip":
-                comp["youtube_channel"] = val
+            val = ask(f"YouTube channel for {name}? (e.g. @Replika / 'skip')")
+            cleaned = clean_youtube_handle(val)
+            if cleaned:
+                comp["youtube_channel"] = cleaned
 
         ok(f"{name} done.")
 
@@ -420,15 +509,19 @@ def step5_write_config(topic: str, competitors: list[dict], params: dict, summar
         },
         "youtube": {
             "search_queries": params["youtube_search_queries"],
-            "channels":       [c["youtube_channel"] for c in competitors if c.get("youtube_channel")],
+            "channels":       [c["youtube_channel"] for c in competitors
+                               if clean_youtube_handle(c.get("youtube_channel", ""))],
         },
         "meta_ads": [
             {"name": c["name"], "page_id": c["meta_ads_page_id"], "url": c.get("meta_ads_url", "")}
             for c in competitors if c.get("meta_ads_page_id")
         ],
-        "play_store":    [c["play_store_id"] for c in competitors if c.get("play_store_id")],
-        "app_store":     [c["app_store_id"] for c in competitors if c.get("app_store_id")],
-        "trustpilot":    [c["trustpilot_slug"] for c in competitors if c.get("trustpilot_slug")],
+        "play_store":    [c["play_store_id"] for c in competitors
+                          if clean_play_store_id(c.get("play_store_id", ""))],
+        "app_store":     [c["app_store_id"] for c in competitors
+                          if clean_app_store_id(c.get("app_store_id", ""))],
+        "trustpilot":    [c["trustpilot_slug"] for c in competitors
+                          if c.get("trustpilot_slug") and not c["trustpilot_slug"].startswith("http")],
         "discovery":     summaries,
     }
 
