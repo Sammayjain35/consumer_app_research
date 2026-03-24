@@ -263,18 +263,8 @@ Return ONLY a JSON array like this (no markdown, no explanation):
 # ── Step 3: Gather links per competitor ───────────────────────────────────────
 
 def _lookup_competitor(name: str) -> dict:
-    """Auto-lookup App Store ID, Play Store ID, YouTube for one competitor. Runs in parallel."""
+    """Auto-lookup Play Store ID and YouTube for one competitor. Runs in parallel."""
     result = {}
-    from app_store import search_apps
-
-    # App Store
-    try:
-        apps = search_apps(name, country="us", limit=1)
-        if apps:
-            result["app_store_found"] = str(apps[0]["trackId"])
-            result["app_store_name"]  = apps[0]["trackName"]
-    except Exception:
-        pass
 
     # Play Store
     try:
@@ -284,7 +274,7 @@ def _lookup_competitor(name: str) -> dict:
         )
         pid = clean_play_store_id(raw.strip().split()[0] if raw else "")
         if pid:
-            result["play_store_found"] = pid
+            result["play_store_id"] = pid
     except Exception:
         pass
 
@@ -296,7 +286,7 @@ def _lookup_competitor(name: str) -> dict:
         )
         handle = clean_youtube_handle(raw.strip().split()[0] if raw else "")
         if handle:
-            result["youtube_found"] = handle
+            result["youtube_channel"] = handle
     except Exception:
         pass
 
@@ -304,13 +294,11 @@ def _lookup_competitor(name: str) -> dict:
 
 
 def step3_gather_links(competitors: list[dict]) -> list[dict]:
-    h2("Step 3 — Gathering links for each competitor")
-    info(f"Auto-searching App Store, Play Store, YouTube for all {len(competitors)} competitors in parallel...")
-    info("This takes ~15-20 seconds...\n")
+    h2("Step 3 — Auto-finding Play Store IDs + YouTube channels")
+    info(f"Searching {len(competitors)} competitors in parallel... (~15s)\n")
 
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    # Run all lookups in parallel
     lookups = {}
     with ThreadPoolExecutor(max_workers=8) as executor:
         futures = {executor.submit(_lookup_competitor, c["name"]): c["name"] for c in competitors}
@@ -324,96 +312,95 @@ def step3_gather_links(competitors: list[dict]) -> list[dict]:
             except Exception:
                 lookups[name] = {}
 
-    print(f"\n  ✅ Auto-search complete.\n")
-
-    # Now confirm per competitor
-    kept = []
+    # Apply findings to competitors
     for comp in competitors:
-        name   = comp["name"]
-        found  = lookups.get(name, {})
+        found = lookups.get(comp["name"], {})
+        if found.get("play_store_id") and not comp.get("play_store_id"):
+            comp["play_store_id"] = found["play_store_id"]
+        if found.get("youtube_channel") and not comp.get("youtube_channel"):
+            comp["youtube_channel"] = found["youtube_channel"]
 
-        print(f"\n  📦 {name} ({comp['market'].upper()})")
-        print(f"  {'─'*50}")
+    print(f"\n  ✅ Done.\n")
 
-        skip = ask("Skip this competitor entirely? [Enter=no / 'skip']")
-        if skip.lower() == "skip":
-            info(f"Skipped {name}.")
-            continue
+    # Show full table — one glance overview
+    print(f"  {'#':<4} {'Name':<22} {'Market':<8} {'Play Store ID':<30} {'YouTube':<20}")
+    print(f"  {'─'*4} {'─'*22} {'─'*8} {'─'*30} {'─'*20}")
+    for i, c in enumerate(competitors, 1):
+        ps  = c.get("play_store_id", "❓ not found")[:28]
+        yt  = c.get("youtube_channel", "")[:18]
+        print(f"  {i:<4} {c['name']:<22} {c['market']:<8} {ps:<30} {yt:<20}")
 
-        # Website
-        val = ask(f"Website URL for {name}? (Enter to skip)")
-        if val and val.lower() not in ("skip", "no"):
-            comp["website"] = val if val.startswith("http") else f"https://{val}"
+    print()
+    info("To fix any entry, type its number and the correct value.")
+    info("Format: '3 com.correct.package' or '3 skip' to clear.")
+    info("Press Enter when done.")
+    print()
 
-        # App Store
-        if found.get("app_store_found"):
-            print(f"     App Store → {found['app_store_name']} ({found['app_store_found']})")
-            val = ask("Use this App Store ID? [Enter=yes / type different / 'skip']")
-            if not val or val.lower() in ("yes", "y"):
-                comp["app_store_id"] = found["app_store_found"]
-            elif val.lower() not in ("skip", "no"):
-                cleaned = clean_app_store_id(val)
-                if cleaned: comp["app_store_id"] = cleaned
+    while True:
+        val = ask("Fix any? (e.g. '3 com.correct.package' or Enter to continue)")
+        if not val:
+            break
+        parts = val.strip().split(None, 1)
+        if len(parts) == 2 and parts[0].isdigit():
+            idx = int(parts[0]) - 1
+            if 0 <= idx < len(competitors):
+                new_val = parts[1].strip()
+                if new_val.lower() == "skip":
+                    competitors[idx].pop("play_store_id", None)
+                    info(f"Cleared Play Store ID for {competitors[idx]['name']}")
+                else:
+                    cleaned = clean_play_store_id(new_val)
+                    if cleaned:
+                        competitors[idx]["play_store_id"] = cleaned
+                        info(f"Updated {competitors[idx]['name']} → {cleaned}")
+                    else:
+                        warn("Doesn't look like a valid package ID. Try again.")
         else:
-            val = ask(f"App Store ID for {name}? ('skip' to skip)")
-            cleaned = clean_app_store_id(val)
-            if cleaned: comp["app_store_id"] = cleaned
+            warn("Format: '<number> <package_id>'")
 
-        # Play Store
-        if found.get("play_store_found"):
-            print(f"     Play Store → {found['play_store_found']}")
-            val = ask("Use this Play Store ID? [Enter=yes / type different / 'skip']")
-            if not val or val.lower() in ("yes", "y"):
-                comp["play_store_id"] = found["play_store_found"]
-            elif val.lower() not in ("skip", "no"):
-                cleaned = clean_play_store_id(val)
-                if cleaned: comp["play_store_id"] = cleaned
+    # Meta Ads — show all at once, user pastes what they have
+    h2("Meta Ads page IDs (optional)")
+    info("For each competitor you want to scrape Meta ads, paste their Facebook Ads Library URL.")
+    info("Format: '<number> <url_or_page_id>'  — or just press Enter to skip all.\n")
+
+    for i, c in enumerate(competitors, 1):
+        print(f"  {i}. {c['name']}")
+
+    print()
+    while True:
+        val = ask("Add Meta Ads? (e.g. '1 https://facebook.com/ads/...pageid=123' or Enter to skip)")
+        if not val:
+            break
+        parts = val.strip().split(None, 1)
+        if len(parts) == 2 and parts[0].isdigit():
+            idx = int(parts[0]) - 1
+            if 0 <= idx < len(competitors):
+                raw = parts[1].strip()
+                id_match = re.search(r'view_all_page_id=(\d+)', raw)
+                if id_match:
+                    competitors[idx]["meta_ads_page_id"] = id_match.group(1)
+                    competitors[idx]["meta_ads_url"]     = raw
+                    ok(f"{competitors[idx]['name']} → page_id {id_match.group(1)}")
+                elif re.match(r'^\d+$', raw):
+                    competitors[idx]["meta_ads_page_id"] = raw
+                    competitors[idx]["meta_ads_url"] = (
+                        f"https://www.facebook.com/ads/library/?active_status=active&ad_type=all"
+                        f"&country=IN&search_type=page&view_all_page_id={raw}"
+                    )
+                    ok(f"{competitors[idx]['name']} → page_id {raw}")
+                else:
+                    warn("Couldn't extract page ID. Paste the full Ads Library URL.")
         else:
-            val = ask(f"Play Store package ID for {name}? (e.g. ai.replika.app / 'skip')")
-            cleaned = clean_play_store_id(val)
-            if cleaned: comp["play_store_id"] = cleaned
+            warn("Format: '<number> <url_or_id>'")
 
-        # Meta Ads
-        info("Meta Ads — paste their Facebook Ads Library URL or numeric page ID.")
-        val = ask(f"Meta Ads page URL or ID for {name}? ('skip' to skip)")
-        if val and val.lower() not in ("skip", "no"):
-            id_match = re.search(r'view_all_page_id=(\d+)', val)
-            if id_match:
-                comp["meta_ads_page_id"] = id_match.group(1)
-                comp["meta_ads_url"]     = val
-            elif re.match(r'^\d+$', val):
-                comp["meta_ads_page_id"] = val
-                comp["meta_ads_url"] = (
-                    f"https://www.facebook.com/ads/library/?active_status=active&ad_type=all"
-                    f"&country=IN&search_type=page&view_all_page_id={val}"
-                )
+    # Skip competitors
+    val = ask("Remove any competitors? (comma-separated numbers, or Enter to keep all)")
+    if val and re.match(r'^[\d,\s]+$', val):
+        to_remove = {int(x.strip()) - 1 for x in val.split(",") if x.strip().isdigit()}
+        competitors = [c for i, c in enumerate(competitors) if i not in to_remove]
+        ok(f"{len(competitors)} competitors remaining.")
 
-        # Trustpilot
-        slug_guess = name.lower().replace(" ", "")
-        val = ask(f"Trustpilot slug? [Enter='{slug_guess}' / paste URL / 'skip']")
-        if not val or val.lower() in ("yes", "y"):
-            comp["trustpilot_slug"] = slug_guess
-        elif val.lower() not in ("skip", "no"):
-            comp["trustpilot_slug"] = clean_trustpilot_slug(val) or val
-
-        # YouTube
-        if found.get("youtube_found"):
-            print(f"     YouTube → {found['youtube_found']}")
-            val = ask("Use this YouTube channel? [Enter=yes / type different / 'skip']")
-            if not val or val.lower() in ("yes", "y"):
-                comp["youtube_channel"] = found["youtube_found"]
-            elif val.lower() not in ("skip", "no"):
-                cleaned = clean_youtube_handle(val)
-                if cleaned: comp["youtube_channel"] = cleaned
-        else:
-            val = ask(f"YouTube channel for {name}? (e.g. @Replika / 'skip')")
-            cleaned = clean_youtube_handle(val)
-            if cleaned: comp["youtube_channel"] = cleaned
-
-        ok(f"{name} done.")
-        kept.append(comp)
-
-    return kept
+    return competitors
 
 
 # ── Step 4: Research parameters ───────────────────────────────────────────────
@@ -556,8 +543,6 @@ def step5_write_config(topic: str, competitors: list[dict], params: dict, summar
         "websites":      [{"name": c["name"], "url": c["website"]} for c in competitors if c.get("website")],
         "play_store":    [c["play_store_id"] for c in competitors
                           if clean_play_store_id(c.get("play_store_id", ""))],
-        "app_store":     [c["app_store_id"] for c in competitors
-                          if clean_app_store_id(c.get("app_store_id", ""))],
         "trustpilot":    [c["trustpilot_slug"] for c in competitors
                           if c.get("trustpilot_slug") and not c["trustpilot_slug"].startswith("http")],
         "discovery":     summaries,
