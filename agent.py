@@ -148,24 +148,31 @@ def gemini_search(prompt: str) -> str:
 
 def step1_discover(topic: str) -> dict:
     h2("Step 1 — Auto-discovering market (this takes ~30s)")
+    info("Searching global, India, and China markets in parallel...")
 
-    info(f"Searching global market for: {topic}...")
-    global_summary = gemini_search(
-        f"Research the global market for '{topic}'. Give me: market size, top 5-8 competitors (company names only, no descriptions), recent funding, and key trends. Be concise."
-    )
-
-    info("Searching India market...")
-    india_summary = gemini_search(
-        f"Research the '{topic}' market specifically in India. Give me: market size, top Indian + global players operating in India, growth trends, pricing norms. Be concise."
-    )
-
-    info("Searching China market...")
+    from concurrent.futures import ThreadPoolExecutor
     from china_search import synthesize_with_deepseek
-    china_summary = synthesize_with_deepseek(
-        topic,
-        [],  # no Baidu results, DeepSeek knowledge only
-        deep=False,
-    )
+
+    def search_global():
+        return gemini_search(
+            f"Research the global market for '{topic}'. Give me: market size, top 5-8 competitors (company names only, no descriptions), recent funding, and key trends. Be concise."
+        )
+
+    def search_india():
+        return gemini_search(
+            f"Research the '{topic}' market specifically in India. Give me: market size, top Indian + global players operating in India, growth trends, pricing norms. Be concise."
+        )
+
+    def search_china():
+        return synthesize_with_deepseek(topic, [], deep=False)
+
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        f_global = ex.submit(search_global)
+        f_india  = ex.submit(search_india)
+        f_china  = ex.submit(search_china)
+        global_summary = f_global.result()
+        india_summary  = f_india.result()
+        china_summary  = f_china.result()
 
     ok("Discovery complete.")
     return {
@@ -279,32 +286,48 @@ Return ONLY a JSON array (no markdown, no explanation):
 # ── Step 3: Gather links per competitor ───────────────────────────────────────
 
 def _lookup_competitor(name: str) -> dict:
-    """Auto-lookup Play Store ID and YouTube for one competitor. Runs in parallel."""
-    result = {}
+    """Auto-lookup Play Store, App Store, and YouTube for one competitor.
+    All 3 sub-lookups run in parallel. The whole function runs in parallel per competitor."""
+    from concurrent.futures import ThreadPoolExecutor
 
-    # Play Store
-    try:
+    def get_play_store():
         raw = gemini_search(
             f"What is the Google Play Store package ID for '{name}' app? "
             f"Return ONLY the package ID like 'ai.replika.app', nothing else."
         )
-        pid = clean_play_store_id(raw.strip().split()[0] if raw else "")
-        if pid:
-            result["play_store_id"] = pid
-    except Exception:
-        pass
+        return clean_play_store_id(raw.strip().split()[0] if raw else "")
 
-    # YouTube
-    try:
+    def get_app_store():
+        raw = gemini_search(
+            f"What is the Apple App Store numeric app ID for '{name}' app? "
+            f"Return ONLY the numeric ID like '1158555867', nothing else."
+        )
+        return clean_app_store_id(raw.strip().split()[0] if raw else "")
+
+    def get_youtube():
         raw = gemini_search(
             f"What is the official YouTube channel handle for '{name}' app? "
             f"Return ONLY '@handle', nothing else."
         )
-        handle = clean_youtube_handle(raw.strip().split()[0] if raw else "")
-        if handle:
-            result["youtube_channel"] = handle
-    except Exception:
-        pass
+        return clean_youtube_handle(raw.strip().split()[0] if raw else "")
+
+    result = {}
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        f_ps = ex.submit(get_play_store)
+        f_as = ex.submit(get_app_store)
+        f_yt = ex.submit(get_youtube)
+        try:
+            pid = f_ps.result()
+            if pid: result["play_store_id"] = pid
+        except Exception: pass
+        try:
+            aid = f_as.result()
+            if aid: result["app_store_id"] = aid
+        except Exception: pass
+        try:
+            handle = f_yt.result()
+            if handle: result["youtube_channel"] = handle
+        except Exception: pass
 
     return result
 
@@ -339,21 +362,24 @@ def step3_gather_links(competitors: list[dict]) -> list[dict]:
         found = lookups.get(comp["name"], {})
         if found.get("play_store_id") and not comp.get("play_store_id"):
             comp["play_store_id"] = found["play_store_id"]
+        if found.get("app_store_id") and not comp.get("app_store_id"):
+            comp["app_store_id"] = found["app_store_id"]
         if found.get("youtube_channel") and not comp.get("youtube_channel"):
             comp["youtube_channel"] = found["youtube_channel"]
 
     print(f"\n  ✅ Done.\n")
 
     # Show major competitors table
-    info("⭐ MAJOR competitors (Play Store + Meta Ads + YouTube + web search):")
-    print(f"\n  {'#':<4} {'Name':<22} {'Market':<8} {'Play Store ID':<30} {'YouTube':<20}")
-    print(f"  {'─'*4} {'─'*22} {'─'*8} {'─'*30} {'─'*20}")
+    info("⭐ MAJOR competitors (Play Store + App Store + Meta Ads + YouTube + web search):")
+    print(f"\n  {'#':<4} {'Name':<22} {'Market':<8} {'Play Store ID':<28} {'App Store ID':<14} {'YouTube':<20}")
+    print(f"  {'─'*4} {'─'*22} {'─'*8} {'─'*28} {'─'*14} {'─'*20}")
     for i, c in enumerate(competitors, 1):
         if c.get("tier") != "major":
             continue
-        ps = c.get("play_store_id", "❓ not found")[:28]
+        ps = c.get("play_store_id", "❓")[:26]
+        ap = c.get("app_store_id",  "❓")[:12]
         yt = c.get("youtube_channel", "")[:18]
-        print(f"  {i:<4} {c['name']:<22} {c['market']:<8} {ps:<30} {yt:<20}")
+        print(f"  {i:<4} {c['name']:<22} {c['market']:<8} {ps:<28} {ap:<14} {yt:<20}")
 
     # Show minor competitors
     if minor:
@@ -367,6 +393,7 @@ def step3_gather_links(competitors: list[dict]) -> list[dict]:
     print()
     info("Fix entries with commands (or just press Enter to continue):")
     info("  '3 ps com.correct.package'   — set Play Store ID")
+    info("  '3 as 1158555867'            — set App Store ID")
     info("  '3 yt @handle'               — set YouTube channel")
     info("  '3 meta 123456789'           — set Meta Ads page ID (major only)")
     info("  '3 meta https://facebook.com/ads/library/?...view_all_page_id=123'")
@@ -393,6 +420,16 @@ def step3_gather_links(competitors: list[dict]) -> list[dict]:
                         ok(f"{comp['name']} Play Store → {cleaned}")
                     else:
                         warn("Doesn't look like a valid package ID.")
+                elif field == "as":
+                    cleaned = clean_app_store_id(new_val)
+                    if new_val.lower() == "skip":
+                        comp.pop("app_store_id", None)
+                        info(f"Cleared App Store ID for {comp['name']}")
+                    elif cleaned:
+                        comp["app_store_id"] = cleaned
+                        ok(f"{comp['name']} App Store → {cleaned}")
+                    else:
+                        warn("Doesn't look like a valid App Store ID.")
                 elif field == "yt":
                     handle = clean_youtube_handle(new_val)
                     if handle:
@@ -416,7 +453,7 @@ def step3_gather_links(competitors: list[dict]) -> list[dict]:
                     else:
                         warn("Paste full Ads Library URL or just the numeric page ID.")
                 else:
-                    warn("Unknown field. Use 'ps', 'yt', or 'meta'.")
+                    warn("Unknown field. Use 'ps', 'as', 'yt', or 'meta'.")
             else:
                 warn(f"No competitor #{int(parts[0])}.")
         else:
@@ -586,6 +623,8 @@ def step5_write_config(topic: str, competitors: list[dict], params: dict, summar
         "websites":      [{"name": c["name"], "url": c["website"]} for c in competitors if c.get("website")],
         "play_store":    [c["play_store_id"] for c in competitors
                           if c.get("tier") == "major" and clean_play_store_id(c.get("play_store_id", ""))],
+        "app_store":     [c["app_store_id"] for c in competitors
+                          if c.get("tier") == "major" and clean_app_store_id(c.get("app_store_id", ""))],
         "trustpilot":    [c["trustpilot_slug"] for c in competitors
                           if c.get("trustpilot_slug") and not c["trustpilot_slug"].startswith("http")],
         "discovery":     summaries,
@@ -596,6 +635,7 @@ def step5_write_config(topic: str, competitors: list[dict], params: dict, summar
     info(f"Topic:             {topic}")
     info(f"Competitors:       {len(competitors)}")
     info(f"Play Store apps:   {len(config['play_store'])}")
+    info(f"App Store apps:    {len(config['app_store'])}")
     info(f"Meta Ads pages:    {len(config['meta_ads'])}")
     info(f"Trustpilot slugs:  {len(config['trustpilot'])}")
     info(f"YouTube channels:  {len(config['youtube']['channels'])}")
@@ -610,6 +650,18 @@ def step5_write_config(topic: str, competitors: list[dict], params: dict, summar
         sys.exit(0)
 
     config_path = research_dir / "config.json"
+
+    # Archive existing config before overwriting
+    if config_path.exists():
+        try:
+            old = json.loads(config_path.read_text())
+            ts = old.get("created_at", "")[:19].replace(":", "-").replace("T", "_")
+            archive = research_dir / f"config_{ts}.json"
+            config_path.rename(archive)
+            info(f"Archived old config → {archive.name}")
+        except Exception:
+            pass
+
     config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2))
     ok(f"Config saved → {config_path}")
     return config_path
