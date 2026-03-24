@@ -262,73 +262,119 @@ Return ONLY a JSON array like this (no markdown, no explanation):
 
 # ── Step 3: Gather links per competitor ───────────────────────────────────────
 
-def step3_gather_links(competitors: list[dict]) -> list[dict]:
-    h2("Step 3 — Gathering links for each competitor")
-    info("I'll auto-search where I can. You only need to fill in what I can't find.\n")
-
+def _lookup_competitor(name: str) -> dict:
+    """Auto-lookup App Store ID, Play Store ID, YouTube for one competitor. Runs in parallel."""
+    result = {}
     from app_store import search_apps
 
-    for comp in competitors:
-        name = comp["name"]
-        print(f"\n  📦 {name} ({comp['market'].upper()})")
-        print(f"  {'─'*40}")
+    # App Store
+    try:
+        apps = search_apps(name, country="us", limit=1)
+        if apps:
+            result["app_store_found"] = str(apps[0]["trackId"])
+            result["app_store_name"]  = apps[0]["trackName"]
+    except Exception:
+        pass
 
-        # --- App Store ---
-        info("Searching App Store...")
-        try:
-            results = search_apps(name, country="us", limit=3)
-            if results:
-                best = results[0]
-                found_id = str(best["trackId"])
-                print(f"     Found: {best['trackName']} (ID: {found_id})")
-                confirm = ask(f"Use this? [Enter=yes / type different ID / 'skip']")
-                if not confirm or confirm.lower() in ("yes", "y"):
-                    comp["app_store_id"] = found_id
-                elif confirm.lower() not in ("skip", "no"):
-                    cleaned = clean_app_store_id(confirm)
-                    if cleaned:
-                        comp["app_store_id"] = cleaned
-            else:
-                val = ask(f"App Store ID for {name}? ('skip' to skip)")
+    # Play Store
+    try:
+        raw = gemini_search(
+            f"What is the Google Play Store package ID for '{name}' app? "
+            f"Return ONLY the package ID like 'ai.replika.app', nothing else."
+        )
+        pid = clean_play_store_id(raw.strip().split()[0] if raw else "")
+        if pid:
+            result["play_store_found"] = pid
+    except Exception:
+        pass
+
+    # YouTube
+    try:
+        raw = gemini_search(
+            f"What is the official YouTube channel handle for '{name}' app? "
+            f"Return ONLY '@handle', nothing else."
+        )
+        handle = clean_youtube_handle(raw.strip().split()[0] if raw else "")
+        if handle:
+            result["youtube_found"] = handle
+    except Exception:
+        pass
+
+    return result
+
+
+def step3_gather_links(competitors: list[dict]) -> list[dict]:
+    h2("Step 3 — Gathering links for each competitor")
+    info(f"Auto-searching App Store, Play Store, YouTube for all {len(competitors)} competitors in parallel...")
+    info("This takes ~15-20 seconds...\n")
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    # Run all lookups in parallel
+    lookups = {}
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = {executor.submit(_lookup_competitor, c["name"]): c["name"] for c in competitors}
+        done = 0
+        for future in as_completed(futures):
+            name = futures[future]
+            done += 1
+            print(f"  [{done:>2}/{len(competitors)}] {name[:40]}", end="\r", flush=True)
+            try:
+                lookups[name] = future.result()
+            except Exception:
+                lookups[name] = {}
+
+    print(f"\n  ✅ Auto-search complete.\n")
+
+    # Now confirm per competitor
+    kept = []
+    for comp in competitors:
+        name   = comp["name"]
+        found  = lookups.get(name, {})
+
+        print(f"\n  📦 {name} ({comp['market'].upper()})")
+        print(f"  {'─'*50}")
+
+        skip = ask("Skip this competitor entirely? [Enter=no / 'skip']")
+        if skip.lower() == "skip":
+            info(f"Skipped {name}.")
+            continue
+
+        # Website
+        val = ask(f"Website URL for {name}? (Enter to skip)")
+        if val and val.lower() not in ("skip", "no"):
+            comp["website"] = val if val.startswith("http") else f"https://{val}"
+
+        # App Store
+        if found.get("app_store_found"):
+            print(f"     App Store → {found['app_store_name']} ({found['app_store_found']})")
+            val = ask("Use this App Store ID? [Enter=yes / type different / 'skip']")
+            if not val or val.lower() in ("yes", "y"):
+                comp["app_store_id"] = found["app_store_found"]
+            elif val.lower() not in ("skip", "no"):
                 cleaned = clean_app_store_id(val)
-                if cleaned:
-                    comp["app_store_id"] = cleaned
-        except Exception:
+                if cleaned: comp["app_store_id"] = cleaned
+        else:
             val = ask(f"App Store ID for {name}? ('skip' to skip)")
             cleaned = clean_app_store_id(val)
-            if cleaned:
-                comp["app_store_id"] = cleaned
+            if cleaned: comp["app_store_id"] = cleaned
 
-        # --- Play Store ---
-        info("Searching Play Store...")
-        try:
-            play_result = gemini_search(
-                f"Find the Google Play Store package ID for the app '{name}'. "
-                f"Return ONLY the package ID (e.g. ai.replika.app), nothing else. No URLs, no extra text."
-            )
-            play_id = clean_play_store_id(play_result.strip().split()[0] if play_result else "")
-            if play_id:
-                print(f"     Found: {play_id}")
-                confirm = ask(f"Use this? [Enter=yes / type different ID / 'skip']")
-                if not confirm or confirm.lower() in ("yes", "y"):
-                    comp["play_store_id"] = play_id
-                elif confirm.lower() not in ("skip", "no"):
-                    cleaned = clean_play_store_id(confirm)
-                    if cleaned:
-                        comp["play_store_id"] = cleaned
-            else:
-                val = ask(f"Play Store package ID for {name}? (e.g. ai.replika.app / 'skip')")
+        # Play Store
+        if found.get("play_store_found"):
+            print(f"     Play Store → {found['play_store_found']}")
+            val = ask("Use this Play Store ID? [Enter=yes / type different / 'skip']")
+            if not val or val.lower() in ("yes", "y"):
+                comp["play_store_id"] = found["play_store_found"]
+            elif val.lower() not in ("skip", "no"):
                 cleaned = clean_play_store_id(val)
-                if cleaned:
-                    comp["play_store_id"] = cleaned
-        except Exception:
+                if cleaned: comp["play_store_id"] = cleaned
+        else:
             val = ask(f"Play Store package ID for {name}? (e.g. ai.replika.app / 'skip')")
             cleaned = clean_play_store_id(val)
-            if cleaned:
-                comp["play_store_id"] = cleaned
+            if cleaned: comp["play_store_id"] = cleaned
 
-        # --- Meta Ads ---
-        info("Meta Ads — paste their Facebook Ads Library URL or just the numeric page ID.")
+        # Meta Ads
+        info("Meta Ads — paste their Facebook Ads Library URL or numeric page ID.")
         val = ask(f"Meta Ads page URL or ID for {name}? ('skip' to skip)")
         if val and val.lower() not in ("skip", "no"):
             id_match = re.search(r'view_all_page_id=(\d+)', val)
@@ -342,46 +388,32 @@ def step3_gather_links(competitors: list[dict]) -> list[dict]:
                     f"&country=IN&search_type=page&view_all_page_id={val}"
                 )
 
-        # --- Trustpilot ---
+        # Trustpilot
         slug_guess = name.lower().replace(" ", "")
-        val = ask(f"Trustpilot slug for {name}? [Enter='{slug_guess}' / paste URL / 'skip']")
+        val = ask(f"Trustpilot slug? [Enter='{slug_guess}' / paste URL / 'skip']")
         if not val or val.lower() in ("yes", "y"):
             comp["trustpilot_slug"] = slug_guess
         elif val.lower() not in ("skip", "no"):
-            cleaned = clean_trustpilot_slug(val) or val
-            comp["trustpilot_slug"] = cleaned
+            comp["trustpilot_slug"] = clean_trustpilot_slug(val) or val
 
-        # --- YouTube ---
-        info("Searching YouTube channel...")
-        try:
-            yt_result = gemini_search(
-                f"Find the official YouTube channel handle for '{name}' app/company. "
-                f"Return ONLY the @handle (e.g. @Replika), nothing else."
-            )
-            yt_handle = clean_youtube_handle(yt_result.strip().split()[0] if yt_result else "")
-            if yt_handle:
-                print(f"     Found: {yt_handle}")
-                confirm = ask(f"Use this? [Enter=yes / type different handle / 'skip']")
-                if not confirm or confirm.lower() in ("yes", "y"):
-                    comp["youtube_channel"] = yt_handle
-                elif confirm.lower() not in ("skip", "no"):
-                    cleaned = clean_youtube_handle(confirm)
-                    if cleaned:
-                        comp["youtube_channel"] = cleaned
-            else:
-                val = ask(f"YouTube channel for {name}? (e.g. @Replika / 'skip')")
+        # YouTube
+        if found.get("youtube_found"):
+            print(f"     YouTube → {found['youtube_found']}")
+            val = ask("Use this YouTube channel? [Enter=yes / type different / 'skip']")
+            if not val or val.lower() in ("yes", "y"):
+                comp["youtube_channel"] = found["youtube_found"]
+            elif val.lower() not in ("skip", "no"):
                 cleaned = clean_youtube_handle(val)
-                if cleaned:
-                    comp["youtube_channel"] = cleaned
-        except Exception:
+                if cleaned: comp["youtube_channel"] = cleaned
+        else:
             val = ask(f"YouTube channel for {name}? (e.g. @Replika / 'skip')")
             cleaned = clean_youtube_handle(val)
-            if cleaned:
-                comp["youtube_channel"] = cleaned
+            if cleaned: comp["youtube_channel"] = cleaned
 
         ok(f"{name} done.")
+        kept.append(comp)
 
-    return competitors
+    return kept
 
 
 # ── Step 4: Research parameters ───────────────────────────────────────────────
@@ -461,11 +493,16 @@ Rules:
         params["reddit_subreddits"].extend([s.strip() for s in val.split(",") if s.strip()])
 
     # Google Trends
-    info(f"\nGoogle Trends keywords: {params['google_trends_keywords']}")
+    info(f"\nGoogle Trends keywords (suggested): {params['google_trends_keywords']}")
     info(f"Geo: {params['google_trends_geo']}")
-    val = ask("Modify keywords? (comma-separated, max 5, or Enter to keep)")
+    info("  Note: max 5 keywords total for Google Trends.")
+    val = ask("Add more keywords? (comma-separated, or Enter to keep as-is)")
     if val:
-        params["google_trends_keywords"] = val
+        existing = [k.strip() for k in params["google_trends_keywords"].split(",") if k.strip()]
+        new_keys = [k.strip() for k in val.split(",") if k.strip()]
+        combined = existing + [k for k in new_keys if k not in existing]
+        params["google_trends_keywords"] = ",".join(combined[:5])  # cap at 5
+        info(f"  Final keywords: {params['google_trends_keywords']}")
     val = ask("Modify geo? (e.g. IN, US, or Enter to keep)")
     if val:
         params["google_trends_geo"] = val
@@ -516,6 +553,7 @@ def step5_write_config(topic: str, competitors: list[dict], params: dict, summar
             {"name": c["name"], "page_id": c["meta_ads_page_id"], "url": c.get("meta_ads_url", "")}
             for c in competitors if c.get("meta_ads_page_id")
         ],
+        "websites":      [{"name": c["name"], "url": c["website"]} for c in competitors if c.get("website")],
         "play_store":    [c["play_store_id"] for c in competitors
                           if clean_play_store_id(c.get("play_store_id", ""))],
         "app_store":     [c["app_store_id"] for c in competitors
