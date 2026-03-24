@@ -245,9 +245,9 @@ Return ONLY a JSON array (no markdown, no explanation):
             break
 
         if action.lower().startswith("major "):
-            parts = action.split()
-            if len(parts) == 2 and parts[1].isdigit():
-                idx = int(parts[1]) - 1
+            nums = re.findall(r'\d+', action)
+            for n in nums:
+                idx = int(n) - 1
                 if 0 <= idx < len(competitors):
                     competitors[idx]["tier"] = "major"
                     ok(f"Upgraded {competitors[idx]['name']} to major")
