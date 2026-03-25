@@ -57,7 +57,7 @@ def load_data(data_dir: Path) -> dict:
     if ps_dir.exists():
         data["play_store"] = []
         for d in ps_dir.iterdir():
-            f = d / "reviews.json"
+            f = d / "play_store_reviews.json"
             if f.exists():
                 reviews = read_json(f) or {}
                 app_reviews = reviews.get("reviews", [])[:100]
@@ -110,9 +110,9 @@ def load_data(data_dir: Path) -> dict:
     # Google Trends
     trends_dir = data_dir / "google_trends"
     if trends_dir.exists():
-        f = trends_dir / "trends.json"
-        if f.exists():
-            data["google_trends"] = read_json(f)
+        files = list(trends_dir.glob("*.json"))
+        if files:
+            data["google_trends"] = read_json(files[0])
 
     # Trustpilot
     tp_dir = data_dir / "trustpilot"

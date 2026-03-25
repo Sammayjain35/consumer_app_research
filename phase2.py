@@ -124,19 +124,6 @@ def build_tasks(config: dict, data_dir: Path) -> list[tuple[str, list[str]]]:
             "--company", slug_tp, "--max", "200", "--out", out,
         ]))
 
-    # Meta Ads
-    for entry in config.get("meta_ads", []):
-        if not entry.get("page_id"):
-            continue
-        name = entry["name"].replace(" ", "_")
-        out  = str(data_dir / "meta_ads" / name)
-        cmd  = ["uv", "run", "python", "tools/meta_ads_runner.py",
-                "--page-id", entry["page_id"], "--name", entry["name"],
-                "--out", out]
-        if entry.get("url"):
-            cmd += ["--url", entry["url"]]
-        tasks.append((f"meta_ads: {entry['name']}", cmd))
-
     return tasks
 
 
@@ -147,17 +134,34 @@ def phase2(config_path: str):
         sys.exit(1)
 
     config   = json.loads(config_file.read_text())
-    slug     = config["slug"]
     data_dir = config_file.parent / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"\n{'='*60}")
-    print(f"  Phase 2 — Data Extraction")
-    print(f"  Topic: {config['topic']}")
-    print(f"{'='*60}\n")
+    # Meta Ads: write a runner config, executed separately after parallel tasks
+    meta_ads = config.get("meta_ads", [])
+    meta_config_path = None
+    if meta_ads:
+        meta_cfg = {
+            "config": {
+                "default_max_ads_per_competitor": 15,
+                "output_directory": str(data_dir / "meta_ads"),
+            },
+            "competitors": [
+                {"name": a["name"], "page_id": a["page_id"], "url": a.get("url", "")}
+                for a in meta_ads if a.get("page_id")
+            ],
+        }
+        meta_config_path = data_dir / "meta_ads_config.json"
+        meta_config_path.write_text(json.dumps(meta_cfg, indent=2))
 
     tasks = build_tasks(config, data_dir)
-    print(f"  {len(tasks)} tasks to run in parallel...\n")
+    total = len(tasks) + (1 if meta_config_path else 0)
+
+    print(f"\n{'='*60}")
+    print(f"  Phase 2 — Data Extraction")
+    print(f"  Topic:  {config['topic']}")
+    print(f"  Tasks:  {len(tasks)} parallel + {'meta ads (sequential)' if meta_config_path else 'no meta ads'}")
+    print(f"{'='*60}\n")
 
     results = []
     with ThreadPoolExecutor(max_workers=10) as executor:
@@ -166,23 +170,36 @@ def phase2(config_path: str):
         for future in as_completed(futures):
             done += 1
             label, success, out = future.result()
-            status = "OK" if success else "FAIL"
-            print(f"  [{done:>2}/{len(tasks)}] [{status}] {label}")
+            icon = "✅" if success else "❌"
+            print(f"  [{done:>2}/{len(tasks)}] {icon} {label}")
             if not success:
-                print(f"         {out[:200]}")
+                for line in out.splitlines()[-3:]:
+                    print(f"           {line}")
             results.append((label, success))
 
-    ok    = sum(1 for _, s in results if s)
-    fails = [(l, ) for l, s in results if not s]
+    # Meta Ads — sequential (Playwright + Gemini, slow)
+    if meta_config_path:
+        print(f"\n  Running Meta Ads (Playwright + Gemini, sequential)...")
+        label, success, out = run(
+            f"meta_ads ({len(meta_ads)} brands)",
+            ["uv", "run", "python", "tools/meta_ads_runner.py", str(meta_config_path)],
+        )
+        icon = "✅" if success else "❌"
+        print(f"  {icon} {label}")
+        if not success:
+            for line in out.splitlines()[-5:]:
+                print(f"       {line}")
+        results.append((label, success))
+
+    passed = sum(1 for _, s in results if s)
+    failed = [l for l, s in results if not s]
 
     print(f"\n{'='*60}")
-    print(f"  Done: {ok}/{len(tasks)} succeeded")
-    if fails:
-        print(f"  Failed:")
-        for (l,) in fails:
-            print(f"    - {l}")
+    print(f"  Done: {passed}/{total} succeeded")
+    if failed:
+        print(f"  Failed: {', '.join(f[:40] for f in failed)}")
     print(f"\n  Data → {data_dir}/")
-    print(f"  Run Phase 3:  uv run python phase3.py {config_path}")
+    print(f"  Next:   uv run python phase3.py {config_path}")
     print(f"{'='*60}\n")
 
 

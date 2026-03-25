@@ -177,6 +177,11 @@ def main():
         default="en",
         help="Language code (default: en). Use 'hi' for Hindi.",
     )
+    parser.add_argument(
+        "--out",
+        default=None,
+        help="Output directory (default: data/play_store/<package_id>)",
+    )
     args = parser.parse_args()
 
     try:
@@ -196,7 +201,7 @@ def main():
         print("No reviews fetched. Check the package ID and try again.")
         sys.exit(1)
 
-    output_dir = Path("data/play_store") / package_id
+    output_dir = Path(args.out) if args.out else Path("data/play_store") / package_id
 
     save_results(package_id, raw, output_dir)
     print(f"\nDone. All files in: {output_dir}")
