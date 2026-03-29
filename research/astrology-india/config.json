@@ -1,0 +1,185 @@
+{
+  "topic": "astrology apps India",
+  "slug": "astrology-india",
+  "created_at": "2026-03-27T11:10:46Z",
+  "markets": ["global", "india", "china"],
+
+  "competitors": {
+    "major": [
+      {
+        "name": "AstroTalk",
+        "market": "india",
+        "tier": "major",
+        "notes": "Dominant leader. Rs 659Cr ($77M) revenue FY24, 60M users, profit 12x to Rs 100Cr, targeting IPO 2026. Raised $14M Jun 2024.",
+        "website": "https://astrotalk.com",
+        "play_store_id": "com.astrotalk",
+        "app_store_id": "1208433822",
+        "youtube_channel": "@AstroTalk"
+      },
+      {
+        "name": "Astroyogi",
+        "market": "india",
+        "tier": "major",
+        "notes": "Established player. Rs 85.3Cr revenue FY24. Metro and Tier-2 cities focus. Founded 2015.",
+        "website": "https://astroyogi.com",
+        "play_store_id": "com.netway.phone.advice"
+      },
+      {
+        "name": "InstaAstro",
+        "market": "india",
+        "tier": "major",
+        "notes": "Fast-growing newer entrant. Rs 21.1Cr revenue. 1M+ downloads, 1500+ astrologers. Launched 2021.",
+        "website": "https://instaastro.com",
+        "play_store_id": "com.instaastro.onlineastrology"
+      },
+      {
+        "name": "VAMA",
+        "market": "india",
+        "tier": "major",
+        "notes": "Venture-backed. Puja + astrology + TV. Founded 2020.",
+        "website": "https://vama.app",
+        "play_store_id": "com.rnselectastro",
+        "app_store_id": "1613296409"
+      }
+    ],
+    "minor": [
+      {
+        "name": "AstroSage",
+        "market": "india",
+        "tier": "minor",
+        "notes": "Tools-focused (kundli, panchang). 70M+ downloads. Established brand.",
+        "website": "https://astrosage.com",
+        "play_store_id": "com.ojassoft.astrosage"
+      },
+      {
+        "name": "Clickastro",
+        "market": "india",
+        "tier": "minor",
+        "notes": "South India focus. Strong in Kerala/Tamil Nadu market.",
+        "website": "https://clickastro.com",
+        "play_store_id": "com.clickastro.freehoroscope.astrology"
+      },
+      {
+        "name": "GaneshaSpeaks",
+        "market": "india",
+        "tier": "minor",
+        "notes": "Rs 13.7Cr revenue FY24. One of the early astrology platforms in India.",
+        "website": "https://ganeshaspeaks.com"
+      },
+      {
+        "name": "Astro 247 AI Astrology",
+        "market": "india",
+        "tier": "minor",
+        "notes": "AI-first astrology app. Newer entrant.",
+        "website": "https://astro247.in",
+        "play_store_id": "com.aroha.astrochat"
+      },
+      {
+        "name": "My Naksh",
+        "market": "india",
+        "tier": "minor",
+        "notes": "AI astrology app. Nakshatra-focused.",
+        "website": "https://mynaksh.com",
+        "play_store_id": "com.astrology.mynaksh"
+      }
+    ]
+  },
+
+  "web_search": {
+    "queries": [
+      "AstroTalk business model revenue growth India 2024 2025",
+      "online astrology market India user behavior trends 2025",
+      "AI astrology apps India vs traditional astrologer consulting",
+      "AstroTalk vs Astroyogi vs InstaAstro comparison India",
+      "astrology app monetization subscription model India",
+      "why do Indians use astrology apps psychology trust",
+      "astrology app funding India startups 2024 2025",
+      "VAMA astrology app growth India puja market"
+    ]
+  },
+
+  "china_search": {
+    "queries": [
+      "Tencent Cece astrology app China market 2024",
+      "BaZi AI fortune telling apps China growth"
+    ]
+  },
+
+  "reddit": {
+    "queries": [
+      "astrology app India which is best",
+      "AstroTalk fake astrologers scam review",
+      "online astrologer consultation experience India"
+    ],
+    "subreddits": ["india", "hinduism", "astrology", "indian"]
+  },
+
+  "google_trends": {
+    "keywords": "AstroTalk,Astroyogi,InstaAstro,AI astrology,online astrologer",
+    "geo": "IN"
+  },
+
+  "youtube": {
+    "search_queries": [
+      "AstroTalk review honest experience India",
+      "best astrology app India 2025",
+      "online astrologer consultation India worth it"
+    ],
+    "channels": ["@AstroTalk"]
+  },
+
+  "meta_ads": [
+    {
+      "name": "AstroTalk",
+      "page_id": "1497921286936951",
+      "url": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&is_targeted_country=false&media_type=all&search_type=page&sort_data[direction]=desc&sort_data[mode]=total_impressions&view_all_page_id=1497921286936951"
+    },
+    {
+      "name": "Astro 247 AI Astrology",
+      "page_id": "413015075227188",
+      "url": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&is_targeted_country=false&media_type=all&search_type=page&sort_data[direction]=desc&sort_data[mode]=total_impressions&view_all_page_id=413015075227188"
+    },
+    {
+      "name": "Astroyogi",
+      "page_id": "168694379812269",
+      "url": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&is_targeted_country=false&media_type=all&search_type=page&sort_data[direction]=desc&sort_data[mode]=total_impressions&view_all_page_id=168694379812269"
+    },
+    {
+      "name": "My Naksh",
+      "page_id": "640942725777702",
+      "url": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&is_targeted_country=false&media_type=all&search_type=page&sort_data[direction]=desc&sort_data[mode]=total_impressions&view_all_page_id=640942725777702"
+    }
+  ],
+
+  "websites": [
+    { "name": "AstroTalk", "url": "https://astrotalk.com" },
+    { "name": "Astroyogi", "url": "https://astroyogi.com" },
+    { "name": "InstaAstro", "url": "https://instaastro.com" },
+    { "name": "VAMA", "url": "https://vama.app" }
+  ],
+
+  "play_store": [
+    "com.astrotalk",
+    "com.netway.phone.advice",
+    "com.instaastro.onlineastrology",
+    "com.rnselectastro",
+    "com.ojassoft.astrosage",
+    "com.clickastro.freehoroscope.astrology",
+    "com.aroha.astrochat",
+    "com.astrology.mynaksh"
+  ],
+
+  "app_store": [
+    "1208433822",
+    "1613296409",
+    "824705526"
+  ],
+
+  "trustpilot": [],
+
+  "discovery": {
+    "global": "Global astrology app market valued at $4-5B in 2024, projected to reach $9B by 2030 at ~24% CAGR. AI integration in 47% of apps. North America 34% share, Asia-Pacific 31%. 48% of users engage daily. AstroTalk is the dominant global player despite being India-born. Key trend: AI horoscope generation reducing prediction time by 30-45%. Session duration improving from 5 to 8 minutes with AI features.",
+    "india": "India astrology app market: $163M in 2024, projected $1.79B by 2030 at 49% CAGR — fastest growing globally. AstroTalk dominates with ~80% market share, Rs 659Cr ($77M) revenue FY24, 60M users, profit jumped 12x to Rs 100Cr, targeting IPO 2026. Astroyogi Rs 85.3Cr, InstaAstro Rs 21.1Cr, GaneshaSpeaks Rs 13.7Cr. 70% revenue from India/South Asia, 30% international. User acquisition cost INR 600-900 recovered in 6-8 months. Regional language localization boosts Android retention by 10-20%. High retention in 40+ demographic: 35-44% at 90 days. AI-first players (Astro247, MyNaksh) are emerging as a new category.",
+    "china": "China online mysticism market $14B annually. 70.3% of Chinese respondents aware of astrology. Tencent's Cece leads with 1M+ MAU — combines BaZi, Tarot, Zi Wei Dou Shu, AI fortune-telling bots and 24-hour livestream astrologers. Government bans monetization of 'superstitious' content on WeChat; creators work around via English content. Young people driving growth amid economic uncertainty. AI BaZi apps emerging: Cantian AI, BaZi Lab. Western astrology gaining traction with younger demographics."
+  }
+}

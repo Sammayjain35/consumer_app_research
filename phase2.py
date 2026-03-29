@@ -36,8 +36,7 @@ def build_tasks(config: dict, data_dir: Path) -> list[tuple[str, list[str]]]:
 
     # Web search
     for q in config.get("web_search", {}).get("queries", []):
-        safe = q[:40].replace(" ", "_").replace("/", "-")
-        out  = str(data_dir / "web_search" / safe)
+        out  = str(data_dir / "web_search")
         tasks.append((f"web: {q[:50]}", [
             "uv", "run", "python", "tools/web_search.py",
             "--query", q, "--out", out,
@@ -45,8 +44,7 @@ def build_tasks(config: dict, data_dir: Path) -> list[tuple[str, list[str]]]:
 
     # China search
     for q in config.get("china_search", {}).get("queries", []):
-        safe = q[:40].replace(" ", "_").replace("/", "-")
-        out  = str(data_dir / "china_search" / safe)
+        out  = str(data_dir / "china_search")
         tasks.append((f"china: {q[:50]}", [
             "uv", "run", "python", "tools/china_search.py",
             "--query", q, "--out", out,
@@ -62,7 +60,7 @@ def build_tasks(config: dict, data_dir: Path) -> list[tuple[str, list[str]]]:
 
     # App Store reviews
     for app_id in config.get("app_store", []):
-        out = str(data_dir / "app_store" / app_id)
+        out = str(data_dir / "app_store")
         tasks.append((f"app_store: {app_id}", [
             "uv", "run", "python", "tools/app_store.py",
             "--app-id", app_id, "--max", "200", "--out", out,
@@ -71,8 +69,7 @@ def build_tasks(config: dict, data_dir: Path) -> list[tuple[str, list[str]]]:
     # Reddit — queries
     for q in config.get("reddit", {}).get("queries", []):
         subs = ",".join(config.get("reddit", {}).get("subreddits", []))
-        safe = q[:40].replace(" ", "_").replace("/", "-")
-        out  = str(data_dir / "reddit" / safe)
+        out  = str(data_dir / "reddit")
         cmd = ["uv", "run", "python", "tools/reddit.py",
                "--search", q, "--max", "50", "--comments", "--out", out]
         if subs:
@@ -81,7 +78,7 @@ def build_tasks(config: dict, data_dir: Path) -> list[tuple[str, list[str]]]:
 
     # Reddit — subreddits (top posts)
     for sub in config.get("reddit", {}).get("subreddits", []):
-        out = str(data_dir / "reddit" / f"r_{sub}")
+        out = str(data_dir / "reddit")
         tasks.append((f"reddit r/{sub}", [
             "uv", "run", "python", "tools/reddit.py",
             "--subreddit", sub, "--sort", "top", "--max", "50", "--comments", "--out", out,
@@ -118,7 +115,7 @@ def build_tasks(config: dict, data_dir: Path) -> list[tuple[str, list[str]]]:
 
     # Trustpilot
     for slug_tp in config.get("trustpilot", []):
-        out = str(data_dir / "trustpilot" / slug_tp)
+        out = str(data_dir / "trustpilot")
         tasks.append((f"trustpilot: {slug_tp}", [
             "uv", "run", "python", "tools/trustpilot.py",
             "--company", slug_tp, "--max", "200", "--out", out,
